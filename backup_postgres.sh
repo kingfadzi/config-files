@@ -1,33 +1,41 @@
 #!/bin/bash
+set -euo pipefail
+trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 
-# Configuration
-BACKUP_DIR="./pgdb_backups"  # This is the mounted folder in the container
-DATE=$(date +%Y-%m-%d_%H-%M-%S)
-PG_USER="postgres"
-PG_HOST="192.168.1.188"
-PG_PORT="5432"
-PG_DUMP="/usr/bin/pg_dump"
-KEEP_DAYS="7"          # How many days of backups to keep
-LOG_FILE="/var/log/pg_backup.log"
+# Configuration – override these with environment variables as needed.
+BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"   # Mounted folder in the container.
+PG_USER="${PG_USER:-postgres}"
+PG_HOST="${PG_HOST:-192.168.1.188}"
+PG_PORT="${PG_PORT:-5432}"
+PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
+LOG_FILE="${LOG_FILE:-/var/log/pg_backup.log}"
+MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"  # Ensure this points to your Minio bucket URL.
 
-# If you need a password, either set PGPASSWORD here
-# export PGPASSWORD="postgres"
+# (Optional) If a password is required, set it here:
+# export PGPASSWORD="${PGPASSWORD:-postgres}"
 
-# Create backup directory if it doesn't exist
+# Create backup and log directories if they don't exist.
 mkdir -p "$BACKUP_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
 
-echo "[$(date)] Starting PostgreSQL backup..." >> "$LOG_FILE"
+# Create (or touch) the log file and redirect all output to it.
+touch "$LOG_FILE"
+exec >> "$LOG_FILE" 2>&1
 
-# Get the list of DBs (excluding templates)
+echo "[$(date)] Starting PostgreSQL backup..."
+
+# Get the list of databases (excluding templates)
 databases=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;")
 
 for db in $databases; do
-  echo "[$(date)] Backing up database: $db" >> "$LOG_FILE"
-  # -Fc => custom format, you can also use -F c for plain text if you prefer
-  $PG_DUMP -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db-$DATE.dump"
+  echo "[$(date)] Backing up database: $db"
+  # Create backup file with name "[database].dump" in custom format (-Fc).
+  "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump"
+  
+  echo "[$(date)] Uploading $db.dump to Minio..."
+  # Upload the backup file to Minio using HTTP PUT via curl.
+  curl -X PUT -T "$BACKUP_DIR/$db.dump" "${MINIO_BASE_URL}/${db}.dump"
+  echo "[$(date)] Backup for $db completed and uploaded."
 done
 
-# (Optional) Remove old backups older than KEEP_DAYS
-find "$BACKUP_DIR" -type f -mtime +$KEEP_DAYS -name "*.dump" -exec rm -f {} \;
-
-echo "[$(date)] PostgreSQL backup completed." >> "$LOG_FILE"
+echo "[$(date)] PostgreSQL backup process completed."
