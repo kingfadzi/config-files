@@ -21,7 +21,9 @@ LOG_FILE="/var/log/services.log"
 # Postgres
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 POSTGRES_LOG_DIR="/var/lib/logs"
+INITDB_BIN="/usr/bin/initdb"
 PGCTL_BIN="/usr/bin/pg_ctl"
+PG_RESTORE_BIN="/usr/bin/pg_restore"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
 PG_MAX_WAIT=30
