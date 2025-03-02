@@ -5,7 +5,7 @@ trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 # Configuration – override these with environment variables as needed.
 BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"   # Mounted folder in the container.
 PG_USER="${PG_USER:-postgres}"
-PG_HOST="${PG_HOST:-192.168.1.188}"
+PG_HOST="${PG_HOST:-localhost}"
 PG_PORT="${PG_PORT:-5432}"
 PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
 LOG_FILE="${LOG_FILE:-/var/log/pg_backup.log}"
