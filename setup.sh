@@ -6,7 +6,7 @@ trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 # SUDO USER CREATION (if running as root without a sudo user)
 ##############################################################################
 if [ "$EUID" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
-    # Use NEW_USER environment variable if provided, otherwise default to "fadzi"
+    # Use NEW_USER environment variable if provided, otherwise default to "xxxxx"
     NEW_USER=${NEW_USER:-"fadzi"}
     if ! id -u "$NEW_USER" >/dev/null 2>&1; then
         echo "[INFO] Creating new user: $NEW_USER"
@@ -53,10 +53,10 @@ export METABASE_HOME="$USER_HOME/tools/metabase"
 export AFFINE_HOME="$USER_HOME/tools/affinity-main"
 # Blob files (binary artifacts) come from S3/Minio.
 export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
-export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
-export INITDB_BIN="/usr/pgsql-13/bin/initdb"
-export PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
-export PG_RESTORE_BIN="/usr/pgsql-13/bin/pg_restore"
+export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
+export INITDB_BIN="/usr/bin/initdb"
+export PGCTL_BIN="/usr/bin/pg_ctl"
+export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export PG_MAX_WAIT=30
 export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
 
@@ -77,7 +77,7 @@ if [ "$REPAVE_INSTALLATION" = "true" ]; then
     systemctl stop postgresql-13 || true
     systemctl stop redis || true
     rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
-    rm -rf "/var/lib/pgsql/13/data"
+    rm -rf "/var/lib/pgsql/data"
 fi
 
 ##############################################################################
@@ -125,27 +125,33 @@ if ! dnf -y install \
 fi
 
 ##############################################################################
-# POSTGRESQL INSTALLATION VIA PGDG REPOSITORY
+# POSTGRESQL INSTALLATION VIA DNF MODULE
 ##############################################################################
 
-log "Setting up PostgreSQL via PGDG repository..."
-if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
-    log "FATAL: Failed to install PGDG repository RPM. Aborting."
+log "Installing PostgreSQL via dnf modules..."
+if ! dnf -y install dnf-plugins-core; then
+    log "FATAL: Failed to install dnf-plugins-core. Aborting."
     exit 1
 fi
 
-if ! dnf -qy module disable postgresql; then
-    log "FATAL: Failed to disable default PostgreSQL module. Aborting."
+if ! dnf -y module enable PostgreSQL:13; then
+    log "FATAL: Failed to enable PostgreSQL:13 module. Aborting."
     exit 1
 fi
 
-if ! dnf -y install postgresql13 postgresql13-server postgresql13-contrib; then
+if ! dnf -y install postgresql-server postgres-contrib; then
     log "FATAL: PostgreSQL package installation failed. Aborting."
     exit 1
 fi
 
 if ! dnf clean all; then
     log "FATAL: dnf clean all failed. Aborting."
+    exit 1
+fi
+
+# Verify postgres user exists.
+if ! id -u postgres >/dev/null 2>&1; then
+    log "FATAL: postgres user does not exist. Aborting."
     exit 1
 fi
 
