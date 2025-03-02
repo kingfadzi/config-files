@@ -88,7 +88,7 @@ cd /tmp
 
 log "Installing system packages..."
 if ! dnf -y install \
-    epel-release \
+    # epel-release \
     wget \
     git \
     curl \
@@ -119,6 +119,10 @@ fi
 # POSTGRESQL INSTALLATION VIA PGDG REPOSITORY
 ##############################################################################
 
+log "Updating system and installing dnf-plugins-core..."
+dnf -y update || { log "FATAL: dnf update failed. Aborting."; exit 1; }
+dnf -y install dnf-plugins-core || { log "FATAL: Failed to install dnf-plugins-core. Aborting."; exit 1; }
+
 if [ "$USE_PGDG" = "true" ]; then
     log "Using PGDG repository for PostgreSQL installation."
     if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
@@ -138,16 +142,13 @@ if [ "$USE_PGDG" = "true" ]; then
     export PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
     export PG_RESTORE_BIN="/usr/pgsql-13/bin/pg_restore"
 else
-    log "Using default PostgreSQL modules installation via dnf."
-    if ! dnf -y module enable PostgreSQL:13; then
-        log "FATAL: Failed to enable PostgreSQL:13 module. Aborting."
+    log "Using default PostgreSQL modules installation via dnf for PostgreSQL 13."
+    # This single command enables the PostgreSQL 13 server module and installs the packages.
+    if ! dnf -y module install postgresql:13/server; then
+        log "FATAL: PostgreSQL 13 module installation failed. Aborting."
         exit 1
     fi
-    if ! dnf -y install postgresql-server postgres-contrib; then
-        log "FATAL: PostgreSQL package installation failed. Aborting."
-        exit 1
-    fi
-    # Set environment variables for the default installation
+    # Set environment variables for the default installation.
     export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
     export INITDB_BIN="/usr/bin/initdb"
     export PGCTL_BIN="/usr/bin/pg_ctl"
