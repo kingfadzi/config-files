@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 
 ##############################################################################
 # SUDO CHECK
@@ -9,504 +11,424 @@ if [ -z "${SUDO_USER:-}" ]; then
 fi
 
 ##############################################################################
-# CONFIG
+# CONFIGURATION VARIABLES
 ##############################################################################
 
-# Determine the real home directory for installations.
+# Determine the real home directory to use for installations.
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
-LOG_FILE="/var/log/services.log"
+# Default repave the installation to true.
+REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
 
-# Postgres
-POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
-POSTGRES_LOG_DIR="/var/lib/logs"
-PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
-PG_HOST="127.0.0.1"
-PG_PORT="5432"
-PG_MAX_WAIT=10
+# Git repository for text configuration files.
+TEXT_FILES_REPO="https://github.com/kingfadzi/config-files.git"
+# Temporary directory to clone the repository.
+TEXT_FILES_DIR="/tmp/config-files"
 
-# Redis
+# Declare Redis configuration file variable.
 REDIS_CONF_FILE="/etc/redis.conf"
 
-# AFFiNE
-AFFINE_HOME="$USER_HOME/tools/affinity-main"
-AFFINE_LOG_DIR="$AFFINE_HOME/logs"
-AFFINE_PORT="3010"
+##############################################################################
+# ENVIRONMENT CONFIGURATION
+##############################################################################
 
-# Metabase
-METABASE_HOME="$USER_HOME/tools/metabase"
-METABASE_LOG_DIR="$METABASE_HOME/logs"
-METABASE_PORT="3000"
-METABASE_JAR="metabase.jar"
-
-export MB_DB_TYPE="postgres"
-export MB_DB_DBNAME="metabase"
-export MB_DB_PORT="5432"
-export MB_DB_USER="postgres"
-export MB_DB_PASS="postgres"
-export MB_DB_HOST="localhost"
-
-# Superset
-SUPERSET_HOME="$USER_HOME/tools/superset"
-SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
-SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
-SUPERSET_PORT="8099"
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+export PYTHONUNBUFFERED=1
+export SUPERSET_HOME="$USER_HOME/tools/superset"
+export SUPERSET_CONFIG_PATH="$SUPERSET_HOME/superset_config.py"
+export METABASE_HOME="$USER_HOME/tools/metabase"
+export AFFINE_HOME="$USER_HOME/tools/affinity-main"
+# Blob files (binary artifacts) still come from S3/Minio.
+export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
+export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
+export INITDB_BIN="/usr/pgsql-13/bin/initdb"
+export PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
+export PG_RESTORE_BIN="/usr/pgsql-13/bin/pg_restore"
+export PG_MAX_WAIT=30
+export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
 
 ##############################################################################
-# LOGGING & HELPERS
+# LOGGING FUNCTION
 ##############################################################################
 
 log() {
-    echo "$(date +'%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+##############################################################################
+# PRE-INSTALLATION: REPAVE
+##############################################################################
+
+if [ "$REPAVE_INSTALLATION" = "true" ]; then
+    echo "[INFO] Repave flag detected (default=true). Stopping services and removing old installation files..."
+    systemctl stop postgresql-13 || true
+    systemctl stop redis || true
+    rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
+    rm -rf "/var/lib/pgsql/13/data"
+fi
+
+##############################################################################
+# CHECK FOR ROOT PRIVILEGES
+##############################################################################
+
+if [ "$EUID" -ne 0 ]; then
+    log "FATAL: This script must be run as root (use sudo)"
+    exit 1
+fi
+
+# Change working directory to avoid permission issues for the postgres user.
+cd /tmp
+
+##############################################################################
+# PACKAGE INSTALLATION (non-PostgreSQL packages)
+##############################################################################
+
+log "Installing system packages..."
+if ! dnf -y install \
+    epel-release \
+    wget \
+    git \
+    curl \
+    gcc \
+    gcc-c++ \
+    make \
+    zlib-devel \
+    bzip2 \
+    readline-devel \
+    openssl-devel \
+    libffi-devel \
+    xz-devel \
+    tar \
+    java-21-openjdk \
+    cronie \
+    logrotate \
+    sudo \
+    iproute \
+    redis \
+    python3.11 \
+    python3.11-devel \
+    nodejs; then
+    log "FATAL: Package installation failed. Aborting."
+    exit 1
+fi
+
+##############################################################################
+# POSTGRESQL INSTALLATION VIA PGDG REPOSITORY
+##############################################################################
+
+log "Setting up PostgreSQL via PGDG repository..."
+if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
+    log "FATAL: Failed to install PGDG repository RPM. Aborting."
+    exit 1
+fi
+
+if ! dnf -qy module disable postgresql; then
+    log "FATAL: Failed to disable default PostgreSQL module. Aborting."
+    exit 1
+fi
+
+if ! dnf -y install postgresql13 postgresql13-server postgresql13-contrib; then
+    log "FATAL: PostgreSQL package installation failed. Aborting."
+    exit 1
+fi
+
+if ! dnf clean all; then
+    log "FATAL: dnf clean all failed. Aborting."
+    exit 1
+fi
+
+# Verify postgres user exists.
+if ! id -u postgres >/dev/null 2>&1; then
+    log "FATAL: postgres user does not exist. Aborting."
+    exit 1
+fi
+
+##############################################################################
+# POSTGRESQL MANAGEMENT FUNCTIONS
+##############################################################################
+
+ensure_permissions() {
+    mkdir -p "$POSTGRES_DATA_DIR"
+    if ! chown postgres:postgres "$POSTGRES_DATA_DIR"; then
+        log "FATAL: Failed to set ownership on $POSTGRES_DATA_DIR. Aborting."
+        exit 1
+    fi
+    chmod 700 "$POSTGRES_DATA_DIR"
 }
 
 psql_check() {
-    su postgres -c "psql --host=$PG_HOST --port=$PG_PORT --username=postgres -c '\q'" 2>/dev/null
+    sudo -u postgres psql -c "SELECT 1;" &>/dev/null
+    return $?
 }
 
-ensure_dir() {
-    local dirpath="$1"
-    if [ ! -d "$dirpath" ]; then
-        log "Creating directory: $dirpath"
-        mkdir -p "$dirpath"
-    fi
-}
-
-redis_check() {
-    pgrep -f "redis-server" &>/dev/null
-}
-
-##############################################################################
-# POSTGRES START / STOP
-##############################################################################
-
-start_postgres() {
-    ensure_dir "$POSTGRES_DATA_DIR"
-    ensure_dir "$POSTGRES_LOG_DIR"
-    if [ ! -f "$POSTGRES_DATA_DIR/PG_VERSION" ]; then
-        log "ERROR: PostgreSQL not initialized. Please run the install script first."
-        return 1
+restore_backup() {
+    local db=$1
+    local backup_file="${db}.dump"
+    local backup_url="${MINIO_BASE_URL}/${backup_file}"
+    local backup_path="/tmp/${backup_file}"
+    
+    log "Downloading ${db} backup from Minio: ${backup_url}"
+    if ! wget -q "${backup_url}" -O "$backup_path"; then
+        log "FATAL: No backup found for ${db} at URL: ${backup_url}. Aborting."
+        exit 1
     fi
 
-    if psql_check; then
-        log "PostgreSQL is already running."
+    log "Restoring ${db} database..."
+    if ! sudo -u postgres "$PG_RESTORE_BIN" -d "$db" "$backup_path"; then
+        log "FATAL: Error restoring ${db} database. Aborting."
+        exit 1
+    fi
+    rm -f "$backup_path"
+}
+
+init_postgres() {
+    ensure_permissions
+    if [ -f "$POSTGRES_DATA_DIR/PG_VERSION" ]; then
+        log "PostgreSQL already initialized"
         return 0
     fi
 
-    log "Starting PostgreSQL..."
-    sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_LOG_DIR/postgres.log"
-    local started_ok=false
+    log "Initializing PostgreSQL cluster..."
+    if ! sudo -u postgres "$INITDB_BIN" -D "$POSTGRES_DATA_DIR"; then
+        log "FATAL: Failed to initialize PostgreSQL cluster. Aborting."
+        exit 1
+    fi
+
+    log "Configuring network access..."
+    if ! sudo -u postgres sed -i "s/^#listen_addresses = 'localhost'/listen_addresses = '*'/" "$POSTGRES_DATA_DIR/postgresql.conf"; then
+        log "FATAL: Failed to configure postgresql.conf. Aborting."
+        exit 1
+    fi
+    echo "host all all 0.0.0.0/0 md5" | sudo -u postgres tee -a "$POSTGRES_DATA_DIR/pg_hba.conf" >/dev/null
+
+    log "Starting temporary PostgreSQL instance..."
+    if ! sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_DATA_DIR/postgres_init.log"; then
+        log "FATAL: Failed to start temporary PostgreSQL instance. Aborting."
+        exit 1
+    fi
+
+    local init_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if psql_check; then
-            log "PostgreSQL started successfully."
-            started_ok=true
+            log "Securing PostgreSQL user..."
+            sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
+            log "Creating databases..."
+            for db in $PG_DATABASES; do
+                if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
+                    sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
+                    log "Created database: $db"
+                fi
+                restore_backup "$db"
+            done
+            init_ok=true
             break
         fi
         sleep 1
     done
 
-    if [ "$started_ok" = false ]; then
-        log "ERROR: Postgres not ready after $PG_MAX_WAIT seconds."
-        return 1
-    fi
-    return 0
-}
-
-stop_postgres() {
-    if ! psql_check; then
-        log "PostgreSQL is not running."
-        return 0
+    if [ "$init_ok" = false ]; then
+        log "FATAL: PostgreSQL initialization failed. Aborting."
+        sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop &>/dev/null
+        exit 1
     fi
 
-    log "Stopping PostgreSQL..."
+    log "Stopping initialization instance..."
     sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
-    local stopped_ok=false
-    for i in $(seq 1 $PG_MAX_WAIT); do
-        if ! psql_check; then
-            log "PostgreSQL stopped successfully."
-            stopped_ok=true
-            break
-        fi
-        sleep 1
-    done
-    if [ "$stopped_ok" = false ]; then
-        log "ERROR: Postgres did not stop within $PG_MAX_WAIT seconds."
-        return 1
-    fi
-    return 0
+    sleep 2
 }
 
 ##############################################################################
-# REDIS
+# POSTGRESQL SETUP
 ##############################################################################
 
-start_redis() {
-    if pgrep -f "redis-server" &>/dev/null; then
-        log "Redis is already running."
-        return 0
-    fi
+log "Configuring PostgreSQL..."
+if ! systemctl enable postgresql-13; then
+    log "FATAL: Could not enable PostgreSQL service. Aborting."
+    exit 1
+fi
 
-    log "Starting Redis..."
-    redis-server "$REDIS_CONF_FILE" &
-    sleep 1
-    if ! pgrep -f "redis-server" &>/dev/null; then
-        log "ERROR: Redis failed to start."
-        return 1
-    fi
-    log "Redis started."
-    return 0
-}
+if ! init_postgres; then
+    log "FATAL: PostgreSQL initialization failed. Aborting."
+    exit 1
+fi
 
-stop_redis() {
-    log "Stopping Redis..."
-    pkill -f "redis-server"
-    sleep 1
-    if pgrep -f "redis-server" &>/dev/null; then
-        log "ERROR: Redis did not stop."
-        return 1
-    fi
-    log "Redis stopped."
-    return 0
-}
+if ! systemctl start postgresql-13; then
+    log "FATAL: Could not start PostgreSQL service. Aborting."
+    exit 1
+fi
+
+log "Verifying PostgreSQL is listening on 0.0.0.0:5432..."
+if ! ss -tnlp | grep -q '0.0.0.0:5432'; then
+    log "FATAL: PostgreSQL is not listening on 0.0.0.0:5432. Aborting."
+    exit 1
+fi
+log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
 
 ##############################################################################
-# AFFiNE
+# REDIS CONFIGURATION
 ##############################################################################
 
-start_affine() {
-    ensure_dir "$AFFINE_HOME"
-    ensure_dir "$AFFINE_LOG_DIR"
-    if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
-        log "AFFiNE is already running."
-        return 0
-    fi
-
-    log "Starting AFFiNE..."
-    cd "$AFFINE_HOME" || return 1
-    nohup sh -c 'node ./scripts/self-host-predeploy && node --loader ./scripts/loader.js ./dist/index.js' \
-      > "$AFFINE_LOG_DIR/affine_log.log" 2>&1 &
-    for i in {1..30}; do
-        if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
-            log "AFFiNE started."
-            return 0
-        fi
-        sleep 1
-    done
-    log "ERROR: AFFiNE failed to start after 30 seconds."
-    return 1
-}
-
-stop_affine() {
-    log "Stopping AFFiNE..."
-    pkill -f 'node --loader ./scripts/loader.js ./dist/index.js'
-    sleep 1
-    if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
-        log "ERROR: AFFiNE did not stop."
-        return 1
-    fi
-    log "AFFiNE stopped."
-    return 0
-}
+log "Setting up Redis..."
+if ! sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" "$REDIS_CONF_FILE"; then
+    log "FATAL: Failed to configure Redis binding. Aborting."
+    exit 1
+fi
+if ! sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
+    log "FATAL: Failed to disable Redis protected mode. Aborting."
+    exit 1
+fi
+if ! systemctl enable redis; then
+    log "FATAL: Could not enable Redis service. Aborting."
+    exit 1
+fi
+if ! systemctl start redis; then
+    log "FATAL: Could not start Redis service. Aborting."
+    exit 1
+fi
 
 ##############################################################################
-# METABASE
+# NODE.JS ENVIRONMENT SETUP
 ##############################################################################
 
-start_metabase() {
-    ensure_dir "$METABASE_HOME"
-    ensure_dir "$METABASE_LOG_DIR"
-    if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
-        log "Metabase is already running."
-        return 0
-    fi
-
-    log "Starting Metabase..."
-    cd "$METABASE_HOME" || return 1
-    nohup java -jar "$METABASE_JAR" \
-      > "$METABASE_LOG_DIR/metabase_log.log" 2>&1 &
-    for i in {1..30}; do
-        if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
-            log "Metabase started."
-            return 0
-        fi
-        sleep 1
-    done
-    log "ERROR: Metabase failed to start after 30 seconds."
-    return 1
-}
-
-stop_metabase() {
-    log "Stopping Metabase..."
-    pkill -f "$METABASE_JAR"
-    sleep 1
-    if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
-        log "ERROR: Metabase did not stop."
-        return 1
-    fi
-    log "Metabase stopped."
-    return 0
-}
+log "Configuring Node.js..."
+if ! npm install -g yarn; then
+    log "FATAL: Failed to install Yarn. Aborting."
+    exit 1
+fi
 
 ##############################################################################
-# SUPERSET INIT & START/STOP
+# PYTHON SETUP
 ##############################################################################
 
-init_superset() {
-    # Ensure Postgres is running
-    if ! psql_check; then
-        log "ERROR: PostgreSQL is not running; cannot init Superset."
-        return 1
-    fi
-
-    # Ensure Redis is running
-    if ! redis_check; then
-        log "ERROR: Redis is not running; cannot init Superset."
-        return 1
-    fi
-
-    export FLASK_APP=superset
-    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
-
-    # Create or verify Superset log directory
-    mkdir -p "$SUPERSET_LOG_DIR"
-
-    local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
-
-    log "Initializing Superset (logging to $LOGFILE)..."
-
-    # 1) Database upgrade
-    superset db upgrade >> "$LOGFILE" 2>&1
-
-    # 2) Create admin user
-    superset fab create-admin \
-        --username admin \
-        --password admin \
-        --firstname Admin \
-        --lastname User \
-        --email admin@admin.com \
-        >> "$LOGFILE" 2>&1
-
-    # 3) Finalize
-    superset init >> "$LOGFILE" 2>&1
-
-    # Create sentinel file
-    touch "$SUPERSET_HOME/.superset_init_done"
-
-    log "Superset initialization complete."
-    return 0
-}
-
-start_superset() {
-    if ! psql_check; then
-        log "ERROR: Postgres is not running; cannot start Superset."
-        return 1
-    fi
-    if ! redis_check; then
-        log "ERROR: Redis is not running; cannot start Superset."
-        return 1
-    fi
-    if [ ! -f "$SUPERSET_HOME/.superset_init_done" ]; then
-        log "Superset not initialized. Initializing now..."
-        init_superset || { log "FATAL: Superset initialization failed."; return 1; }
-    fi
-    ensure_dir "$SUPERSET_HOME"
-    ensure_dir "$SUPERSET_LOG_DIR"
-    if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
-        log "Superset is already running."
-        return 0
-    fi
-    cd "$SUPERSET_HOME" || return 1
-    source env/bin/activate
-    export FLASK_APP=superset
-    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
-    log "Starting Superset..."
-    nohup superset run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
-      > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
-    for i in {1..30}; do
-        if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
-            log "Superset started."
-            return 0
-        fi
-        sleep 1
-    done
-    log "ERROR: Superset failed to start after 30 seconds."
-    return 1
-}
-
-stop_superset() {
-    log "Stopping Superset..."
-    pkill -f "superset run"
-    sleep 1
-    if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
-        log "ERROR: Superset did not stop."
-        return 1
-    fi
-    log "Superset stopped."
-    return 0
-}
+log "Setting up Python..."
+if ! python3.11 -m ensurepip --upgrade; then
+    log "FATAL: Failed to ensure Python pip. Aborting."
+    exit 1
+fi
+if ! python3.11 -m pip install --upgrade pip; then
+    log "FATAL: Failed to upgrade pip. Aborting."
+    exit 1
+fi
+if ! alternatives --set python3 /usr/bin/python3.11; then
+    log "FATAL: Failed to set default Python. Aborting."
+    exit 1
+fi
 
 ##############################################################################
-# START/STOP ALL
+# APACHE SUPERSET INSTALLATION & VENV CREATION
 ##############################################################################
 
-start_all() {
-    log "Starting all services..."
-    start_postgres || { log "ERROR: Postgres is required."; return 1; }
-    start_redis || { log "ERROR: Redis is required."; return 1; }
-    start_affine || return 1
-    start_metabase || return 1
-    start_superset || return 1
-    log "All services started."
-    return 0
-}
+log "Creating Python virtual environment for Superset..."
+if [ ! -d "$SUPERSET_HOME/env" ]; then
+    python3.11 -m venv "$SUPERSET_HOME/env"
+fi
 
-stop_all() {
-    log "Stopping all services..."
-    stop_superset
-    stop_metabase
-    stop_affine
-    stop_redis
-    stop_postgres
-    log "All services stopped."
-}
+log "Activating virtual environment and installing Apache Superset..."
+source "$SUPERSET_HOME/env/bin/activate"
+if ! pip install --upgrade pip setuptools wheel; then
+    log "FATAL: Failed to upgrade pip/setuptools/wheel in venv. Aborting."
+    exit 1
+fi
+if ! pip install "apache-superset[postgres]==4.1.0rc3"; then
+    log "FATAL: Failed to install Apache Superset in venv. Aborting."
+    exit 1
+fi
+deactivate
 
 ##############################################################################
-# RESTART
+# FILE MANAGEMENT: Creating application directories
 ##############################################################################
 
-restart_postgres() {
-    stop_postgres
-    start_postgres
-}
-
-restart_redis() {
-    stop_redis
-    start_redis
-}
-
-restart_affine() {
-    stop_affine
-    start_affine
-}
-
-restart_metabase() {
-    stop_metabase
-    start_metabase
-}
-
-restart_superset() {
-    stop_superset
-    start_superset
-}
-
-restart_all() {
-    log "Restarting all services..."
-    stop_all
-    start_all
-}
+log "Creating application directories..."
+mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
 
 ##############################################################################
-# STATUS FUNCTIONS
+# CONFIGURATION DOWNLOADS
 ##############################################################################
+# Clone the Git repository for text configuration files.
+log "Cloning text configuration files from Git repository: $TEXT_FILES_REPO"
+if [ -d "$TEXT_FILES_DIR" ]; then
+    rm -rf "$TEXT_FILES_DIR"
+fi
+git clone "$TEXT_FILES_REPO" "$TEXT_FILES_DIR"
 
-status_postgres() {
-    if psql_check; then
-        log "PostgreSQL is running."
-    else
-        log "PostgreSQL is NOT running."
+log "Copying text configuration files..."
+cp "$TEXT_FILES_DIR/our-logs.conf" /etc/logrotate.d/our-logs
+cp "$TEXT_FILES_DIR/backup_postgres.sh" /usr/local/bin/backup_postgres.sh
+cp "$TEXT_FILES_DIR/superset_config.py" "$SUPERSET_CONFIG_PATH"
+cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services.sh
+chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services.sh
+
+# Download blob files (binary artifacts) from S3/Minio.
+declare -A blob_files=(
+    ["metabase.jar"]="$METABASE_HOME/metabase.jar"
+    ["affine.tar.gz"]="$AFFINE_HOME/affine.tar.gz"
+)
+
+log "Downloading blob files from S3/Minio..."
+for file in "${!blob_files[@]}"; do
+    dest="${blob_files[$file]}"
+    url="${MINIO_BASE_URL}/${file}"
+    log "Downloading $file from $url"
+    if ! wget -q "$url" -O "$dest"; then
+        log "FATAL: Failed to download $file from $url. Aborting."
+        exit 1
     fi
-}
-
-status_redis() {
-    if pgrep -f "redis-server" &>/dev/null; then
-        log "Redis is running."
-    else
-        log "Redis is NOT running."
-    fi
-}
-
-status_affine() {
-    if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
-        log "AFFiNE is running."
-    else
-        log "AFFiNE is NOT running."
-    fi
-}
-
-status_metabase() {
-    if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
-        log "Metabase is running."
-    else
-        log "Metabase is NOT running."
-    fi
-}
-
-status_superset() {
-    if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
-        log "Superset is running."
-    else
-        log "Superset is NOT running."
-    fi
-}
-
-status_all() {
-    status_postgres
-    status_redis
-    status_affine
-    status_metabase
-    status_superset
-}
+done
 
 ##############################################################################
-# MENU
+# AFFiNE SETUP
 ##############################################################################
 
-case "$1" in
-    start)
-        case "$2" in
-            all) start_all ;;
-            postgres) start_postgres ;;
-            redis) start_redis ;;
-            affine) start_affine ;;
-            metabase) start_metabase ;;
-            superset) start_superset ;;
-            *) echo "Usage: $0 start {all|postgres|redis|affine|metabase|superset}" ;;
-        esac
-        ;;
-    stop)
-        case "$2" in
-            all) stop_all ;;
-            postgres) stop_postgres ;;
-            redis) stop_redis ;;
-            affine) stop_affine ;;
-            metabase) stop_metabase ;;
-            superset) stop_superset ;;
-            *) echo "Usage: $0 stop {all|postgres|redis|affine|metabase|superset}" ;;
-        esac
-        ;;
-    restart)
-        case "$2" in
-            all) restart_all ;;
-            postgres) restart_postgres ;;
-            redis) restart_redis ;;
-            affine) restart_affine ;;
-            metabase) restart_metabase ;;
-            superset) restart_superset ;;
-            *) echo "Usage: $0 restart {all|postgres|redis|affine|metabase|superset}" ;;
-        esac
-        ;;
-    status)
-        case "$2" in
-            all) status_all ;;
-            postgres) status_postgres ;;
-            redis) status_redis ;;
-            affine) status_affine ;;
-            metabase) status_metabase ;;
-            superset) status_superset ;;
-            *) echo "Usage: $0 status {all|postgres|redis|affine|metabase|superset}" ;;
-        esac
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|restart|status} {service|all}"
-        ;;
-esac
+log "Deploying AFFiNE..."
+if ! tar -xzf "$AFFINE_HOME/affine.tar.gz" -C "$AFFINE_HOME" --strip-components=1; then
+    log "FATAL: Failed to extract AFFiNE package. Aborting."
+    exit 1
+fi
+rm -f "$AFFINE_HOME/affine.tar.gz"
+if ! chown -R $SUDO_USER:$SUDO_USER "$AFFINE_HOME"; then
+    log "FATAL: Failed to set ownership for AFFiNE. Aborting."
+    exit 1
+fi
+find "$AFFINE_HOME" -type d -exec chmod 755 {} \;
+find "$AFFINE_HOME" -type f -exec chmod 644 {} \;
+
+##############################################################################
+# MAINTENANCE CONFIGURATION
+##############################################################################
+
+log "Configuring maintenance jobs..."
+if ! chmod +x /usr/local/bin/backup_postgres.sh; then
+    log "FATAL: Failed to make backup_postgres.sh executable. Aborting."
+    exit 1
+fi
+if ! chmod +x /usr/local/bin/services.sh; then
+    log "FATAL: Failed to make services.sh executable. Aborting."
+    exit 1
+fi
+mkdir -p /var/lib/logs /var/log/redis /mnt/pgdb_backups
+
+echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
+echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
+
+##############################################################################
+# FINALIZATION
+##############################################################################
+
+log "Provisioning complete!"
+echo "=================================================="
+echo "Service Summary:"
+echo "- PostgreSQL: 5432 (Databases: $PG_DATABASES)"
+echo "- Redis: 6379"
+echo "- Superset: 8099"
+echo "- AFFiNE: $AFFINE_HOME"
+echo "=================================================="
+echo "Post-Installation Steps:"
+echo "1. To initialize Superset (if not already done), run:"
+echo "   sudo /usr/local/bin/services.sh start superset"
+echo "2. Start Metabase with:"
+echo "   java -jar $METABASE_HOME/metabase.jar"
+echo "3. Verify backups with:"
+echo "   ls -l /mnt/pgdb_backups"
