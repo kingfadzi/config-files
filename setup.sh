@@ -133,20 +133,32 @@ if ! dnf -y install dnf-plugins-core; then
     exit 1
 fi
 
+# Try to enable PostgreSQL:13 module.
 if ! dnf -y module enable PostgreSQL:13; then
-    log "FATAL: Failed to enable PostgreSQL:13 module. Aborting."
-    exit 1
-fi
-
-if ! dnf -y install postgresql-server postgres-contrib; then
-    log "FATAL: PostgreSQL package installation failed. Aborting."
-    exit 1
+    log "WARNING: Failed to enable PostgreSQL:13 module. Falling back to PGDG repository..."
+    if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
+        log "FATAL: Failed to install PGDG repository RPM. Aborting."
+        exit 1
+    fi
+    if ! dnf -qy module disable postgresql; then
+        log "WARNING: Failed to disable default PostgreSQL module. Continuing..."
+    fi
+    if ! dnf -y install postgresql13 postgresql13-server postgresql13-contrib; then
+        log "FATAL: PostgreSQL package installation via PGDG repository failed. Aborting."
+        exit 1
+    fi
+else
+    if ! dnf -y install postgresql-server postgres-contrib; then
+        log "FATAL: PostgreSQL package installation failed. Aborting."
+        exit 1
+    fi
 fi
 
 if ! dnf clean all; then
     log "FATAL: dnf clean all failed. Aborting."
     exit 1
 fi
+
 
 # Verify postgres user exists.
 if ! id -u postgres >/dev/null 2>&1; then
