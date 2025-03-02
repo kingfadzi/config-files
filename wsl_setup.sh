@@ -25,6 +25,9 @@ TEXT_FILES_REPO="https://github.com/kingfadzi/config-files.git"
 # Temporary directory to clone the repository.
 TEXT_FILES_DIR="/tmp/config-files"
 
+# Declare Redis configuration file variable.
+REDIS_CONF_FILE="/etc/redis.conf"
+
 ##############################################################################
 # ENVIRONMENT CONFIGURATION
 ##############################################################################
@@ -66,8 +69,13 @@ if [ "$REPAVE_INSTALLATION" = "true" ]; then
 fi
 
 ##############################################################################
-# CHECK FOR ROOT PRIVILEGES (already ensured by SUDO_USER check above)
+# CHECK FOR ROOT PRIVILEGES
 ##############################################################################
+
+if [ "$EUID" -ne 0 ]; then
+    log "FATAL: This script must be run as root (use sudo)"
+    exit 1
+fi
 
 # Change working directory to avoid permission issues for the postgres user.
 cd /tmp
@@ -399,67 +407,8 @@ echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
 echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
 
 ##############################################################################
-# INIT SUPERSET
-##############################################################################
-
-redis_check() {
-    pgrep -f "redis-server" &>/dev/null
-}
-
-init_superset() {
-    # Ensure Postgres is running
-    if ! psql_check; then
-        log "ERROR: PostgreSQL is not running; cannot init Superset."
-        return 1
-    fi
-
-    # Ensure Redis is running (if your superset config depends on it)
-    if ! redis_check; then
-        log "ERROR: Redis is not running; cannot init Superset."
-        return 1
-    fi
-
-    export FLASK_APP=superset
-    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
-
-    # Create or verify your Superset log directory
-    mkdir -p "$SUPERSET_LOG_DIR"
-
-    local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
-
-    log "Initializing Superset (logging to $LOGFILE)..."
-
-    # 1) Database upgrade
-    superset db upgrade >> "$LOGFILE" 2>&1
-
-    # 2) Create admin user
-    superset fab create-admin \
-        --username admin \
-        --password admin \
-        --firstname Admin \
-        --lastname User \
-        --email admin@admin.com \
-        >> "$LOGFILE" 2>&1
-
-    # 3) Load examples (optional)
-    # superset load_examples >> "$LOGFILE" 2>&1
-
-    # 4) Finalize
-    superset init >> "$LOGFILE" 2>&1
-
-    # Optionally set a sentinel or do other steps
-    touch "$SUPERSET_HOME/.superset_init_done"
-
-    log "Superset initialization complete."
-    return 0
-}
-
-##############################################################################
 # FINALIZATION
 ##############################################################################
-
-log "Initializing Superset..."
-init_superset || { log "FATAL: Superset initialization failed. Aborting."; exit 1; }
 
 log "Provisioning complete!"
 echo "=================================================="
