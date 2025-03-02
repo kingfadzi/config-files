@@ -98,8 +98,13 @@ fi
 ##############################################################################
 # CHECK FOR NON-ROOT EXECUTION
 ##############################################################################
-if [ "$EUID" -eq 0 ]; then
-    log "FATAL: This script should not be run as root. Execute via sudo as a non-root user."
+# Determine the real home directory for installations.
+# If SUDO_USER is unset, fall back to the current user.
+USER_HOME=$(getent passwd "${SUDO_USER:-$(whoami)}" | cut -d: -f6)
+
+# Check that the script is not run as root unless executed via sudo.
+if [ "$EUID" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
+    echo "[ERROR] This script should not be run as root directly. Execute via sudo as a non-root user." >&2
     exit 1
 fi
 
