@@ -3,21 +3,19 @@ set -euo pipefail
 trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 
 ##############################################################################
+# SUDO CHECK
+##############################################################################
+if [ -z "${SUDO_USER:-}" ]; then
+    echo "[ERROR] This script must be run using sudo." >&2
+    exit 1
+fi
+
+##############################################################################
 # CONFIGURATION VARIABLES
 ##############################################################################
 
 # Determine the real home directory to use for installations.
-if [ -n "${SUDO_USER:-}" ]; then
-    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-else
-    USER_HOME="$HOME"
-fi
-
-# Ensure the script is run using sudo.
-if [ -z "${SUDO_USER:-}" ]; then
-    echo "[ERROR] This script must be run with sudo."
-    exit 1
-fi
+USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
 # Default repave the installation to true.
 REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
@@ -68,13 +66,8 @@ if [ "$REPAVE_INSTALLATION" = "true" ]; then
 fi
 
 ##############################################################################
-# CHECK FOR ROOT PRIVILEGES
+# CHECK FOR ROOT PRIVILEGES (already ensured by SUDO_USER check above)
 ##############################################################################
-
-if [ "$EUID" -ne 0 ]; then
-    log "FATAL: This script must be run as root (use sudo)"
-    exit 1
-fi
 
 # Change working directory to avoid permission issues for the postgres user.
 cd /tmp
@@ -270,11 +263,11 @@ log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
 ##############################################################################
 
 log "Setting up Redis..."
-if ! sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" /etc/redis.conf; then
+if ! sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to configure Redis binding. Aborting."
     exit 1
 fi
-if ! sed -i "s/^protected-mode yes/protected-mode no/" /etc/redis.conf; then
+if ! sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to disable Redis protected mode. Aborting."
     exit 1
 fi
@@ -406,8 +399,67 @@ echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
 echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
 
 ##############################################################################
+# INIT SUPERSET
+##############################################################################
+
+redis_check() {
+    pgrep -f "redis-server" &>/dev/null
+}
+
+init_superset() {
+    # Ensure Postgres is running
+    if ! psql_check; then
+        log "ERROR: PostgreSQL is not running; cannot init Superset."
+        return 1
+    fi
+
+    # Ensure Redis is running (if your superset config depends on it)
+    if ! redis_check; then
+        log "ERROR: Redis is not running; cannot init Superset."
+        return 1
+    fi
+
+    export FLASK_APP=superset
+    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+
+    # Create or verify your Superset log directory
+    mkdir -p "$SUPERSET_LOG_DIR"
+
+    local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
+
+    log "Initializing Superset (logging to $LOGFILE)..."
+
+    # 1) Database upgrade
+    superset db upgrade >> "$LOGFILE" 2>&1
+
+    # 2) Create admin user
+    superset fab create-admin \
+        --username admin \
+        --password admin \
+        --firstname Admin \
+        --lastname User \
+        --email admin@admin.com \
+        >> "$LOGFILE" 2>&1
+
+    # 3) Load examples (optional)
+    # superset load_examples >> "$LOGFILE" 2>&1
+
+    # 4) Finalize
+    superset init >> "$LOGFILE" 2>&1
+
+    # Optionally set a sentinel or do other steps
+    touch "$SUPERSET_HOME/.superset_init_done"
+
+    log "Superset initialization complete."
+    return 0
+}
+
+##############################################################################
 # FINALIZATION
 ##############################################################################
+
+log "Initializing Superset..."
+init_superset || { log "FATAL: Superset initialization failed. Aborting."; exit 1; }
 
 log "Provisioning complete!"
 echo "=================================================="
@@ -418,9 +470,7 @@ echo "- Superset: 8099"
 echo "- AFFiNE: $AFFINE_HOME"
 echo "=================================================="
 echo "Post-Installation Steps:"
-echo "1. Initialize Superset:"
-echo "   superset db upgrade && superset init"
-echo "2. Start Metabase:"
+echo "1. Start Metabase:"
 echo "   java -jar $METABASE_HOME/metabase.jar"
-echo "3. Verify backups:"
+echo "2. Verify backups:"
 echo "   ls -l /mnt/pgdb_backups"
