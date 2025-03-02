@@ -72,6 +72,10 @@ ensure_dir() {
     fi
 }
 
+redis_check() {
+    pgrep -f "redis-server" &>/dev/null
+}
+
 ##############################################################################
 # POSTGRES START / STOP
 ##############################################################################
@@ -244,21 +248,66 @@ stop_metabase() {
 }
 
 ##############################################################################
-# SUPERSET
+# SUPERSET INIT & START/STOP
 ##############################################################################
+
+init_superset() {
+    # Ensure Postgres is running
+    if ! psql_check; then
+        log "ERROR: PostgreSQL is not running; cannot init Superset."
+        return 1
+    fi
+
+    # Ensure Redis is running
+    if ! redis_check; then
+        log "ERROR: Redis is not running; cannot init Superset."
+        return 1
+    fi
+
+    export FLASK_APP=superset
+    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+
+    # Create or verify Superset log directory
+    mkdir -p "$SUPERSET_LOG_DIR"
+
+    local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
+
+    log "Initializing Superset (logging to $LOGFILE)..."
+
+    # 1) Database upgrade
+    superset db upgrade >> "$LOGFILE" 2>&1
+
+    # 2) Create admin user
+    superset fab create-admin \
+        --username admin \
+        --password admin \
+        --firstname Admin \
+        --lastname User \
+        --email admin@admin.com \
+        >> "$LOGFILE" 2>&1
+
+    # 3) Finalize
+    superset init >> "$LOGFILE" 2>&1
+
+    # Create sentinel file
+    touch "$SUPERSET_HOME/.superset_init_done"
+
+    log "Superset initialization complete."
+    return 0
+}
 
 start_superset() {
     if ! psql_check; then
         log "ERROR: Postgres is not running; cannot start Superset."
         return 1
     fi
-    if ! pgrep -f "redis-server" &>/dev/null; then
+    if ! redis_check; then
         log "ERROR: Redis is not running; cannot start Superset."
         return 1
     fi
     if [ ! -f "$SUPERSET_HOME/.superset_init_done" ]; then
-        log "ERROR: Superset not initialized. Initialization must be done separately."
-        return 1
+        log "Superset not initialized. Initializing now..."
+        init_superset || { log "FATAL: Superset initialization failed."; return 1; }
     fi
     ensure_dir "$SUPERSET_HOME"
     ensure_dir "$SUPERSET_LOG_DIR"
