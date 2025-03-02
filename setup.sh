@@ -14,6 +14,8 @@ fi
 # CONFIGURATION VARIABLES
 ##############################################################################
 
+USE_PGDG=false
+
 # Determine the real home directory to use for installations.
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
@@ -117,8 +119,8 @@ fi
 # POSTGRESQL INSTALLATION VIA PGDG REPOSITORY
 ##############################################################################
 
-if ! dnf -y module enable PostgreSQL:13; then
-    log "WARNING: Failed to enable PostgreSQL:13 module. Falling back to PGDG repository..."
+if [ "${USE_PGDG}" = "true" ]; then
+    log "Using PGDG repository for PostgreSQL installation."
     if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
         log "FATAL: Failed to install PGDG repository RPM. Aborting."
         exit 1
@@ -130,28 +132,31 @@ if ! dnf -y module enable PostgreSQL:13; then
         log "FATAL: PostgreSQL package installation via PGDG repository failed. Aborting."
         exit 1
     fi
-else
-    if ! dnf -y install postgresql-server postgres-contrib; then
-        log "FATAL: PostgreSQL package installation failed. Aborting."
-        exit 1
-    fi
-fi
-
-if ! dnf clean all; then
-    log "FATAL: dnf clean all failed. Aborting."
-    exit 1
-fi
-
-if [ -x "/usr/pgsql-13/bin/initdb" ]; then
+    # Set environment variables for PGDG installation
     export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
     export INITDB_BIN="/usr/pgsql-13/bin/initdb"
     export PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
     export PG_RESTORE_BIN="/usr/pgsql-13/bin/pg_restore"
 else
+    log "Using default PostgreSQL modules installation via dnf."
+    if ! dnf -y module enable PostgreSQL:13; then
+        log "FATAL: Failed to enable PostgreSQL:13 module. Aborting."
+        exit 1
+    fi
+    if ! dnf -y install postgresql-server postgres-contrib; then
+        log "FATAL: PostgreSQL package installation failed. Aborting."
+        exit 1
+    fi
+    # Set environment variables for the default installation
     export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
     export INITDB_BIN="/usr/bin/initdb"
     export PGCTL_BIN="/usr/bin/pg_ctl"
     export PG_RESTORE_BIN="/usr/bin/pg_restore"
+fi
+
+if ! dnf clean all; then
+    log "FATAL: dnf clean all failed. Aborting."
+    exit 1
 fi
 
 # Verify postgres user exists.
