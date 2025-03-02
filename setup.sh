@@ -119,7 +119,7 @@ fi
 # POSTGRESQL INSTALLATION VIA PGDG REPOSITORY
 ##############################################################################
 
-if [ "${USE_PGDG}" = "true" ]; then
+if [ "$USE_PGDG" = "true" ]; then
     log "Using PGDG repository for PostgreSQL installation."
     if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
         log "FATAL: Failed to install PGDG repository RPM. Aborting."
