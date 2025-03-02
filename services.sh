@@ -51,6 +51,8 @@ SUPERSET_HOME="$USER_HOME/tools/superset"
 SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
 SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
 SUPERSET_PORT="8099"
+# Define the absolute path to the superset command in the virtualenv.
+SUPERSET_CMD="$SUPERSET_HOME/env/bin/superset"
 
 ##############################################################################
 # LOGGING & HELPERS
@@ -267,18 +269,16 @@ init_superset() {
     export FLASK_APP=superset
     export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
 
-    # Create or verify Superset log directory
-    mkdir -p "$SUPERSET_LOG_DIR"
-
+    ensure_dir "$SUPERSET_LOG_DIR"
     local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
 
     log "Initializing Superset (logging to $LOGFILE)..."
 
     # 1) Database upgrade
-    superset db upgrade >> "$LOGFILE" 2>&1
+    "$SUPERSET_HOME/env/bin/superset" db upgrade >> "$LOGFILE" 2>&1
 
     # 2) Create admin user
-    superset fab create-admin \
+    "$SUPERSET_HOME/env/bin/superset" fab create-admin \
         --username admin \
         --password admin \
         --firstname Admin \
@@ -287,9 +287,8 @@ init_superset() {
         >> "$LOGFILE" 2>&1
 
     # 3) Finalize
-    superset init >> "$LOGFILE" 2>&1
+    "$SUPERSET_HOME/env/bin/superset" init >> "$LOGFILE" 2>&1
 
-    # Create sentinel file
     touch "$SUPERSET_HOME/.superset_init_done"
 
     log "Superset initialization complete."
@@ -316,11 +315,9 @@ start_superset() {
         return 0
     fi
     cd "$SUPERSET_HOME" || return 1
-    source env/bin/activate
-    export FLASK_APP=superset
-    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+    # Use the superset command from the virtual environment explicitly.
     log "Starting Superset..."
-    nohup superset run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
+    nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
       > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
     for i in {1..30}; do
         if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
