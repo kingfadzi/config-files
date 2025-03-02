@@ -13,6 +13,12 @@ else
     USER_HOME="$HOME"
 fi
 
+# Ensure the script is run using sudo.
+if [ -z "${SUDO_USER:-}" ]; then
+    echo "[ERROR] This script must be run with sudo."
+    exit 1
+fi
+
 # Default repave the installation to true.
 REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
 
@@ -32,7 +38,7 @@ export SUPERSET_HOME="$USER_HOME/tools/superset"
 export SUPERSET_CONFIG_PATH="$SUPERSET_HOME/superset_config.py"
 export METABASE_HOME="$USER_HOME/tools/metabase"
 export AFFINE_HOME="$USER_HOME/tools/affinity-main"
-# Blobs (binary artifacts) still come from S3/Minio.
+# Blob files (binary artifacts) still come from S3/Minio.
 export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
 export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
 export INITDB_BIN="/usr/pgsql-13/bin/initdb"
