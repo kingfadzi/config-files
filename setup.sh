@@ -2,12 +2,20 @@
 set -euo pipefail
 trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 
-# Determine the real home directory to use for installations.
-if [ -n "${SUDO_USER:-}" ]; then
-    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-else
-    USER_HOME="$HOME"
+##############################################################################
+# CHECK FOR SUDO ACCESS
+##############################################################################
+if ! sudo -v; then
+    echo "[FATAL] This script requires sudo access. Please run it with a user that has sudo privileges."
+    exit 1
 fi
+
+##############################################################################
+# CONFIGURATION VARIABLES
+##############################################################################
+
+# Determine the real home directory for installations.
+USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
 # Default repave the installation to true.
 REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
@@ -76,7 +84,7 @@ cd /tmp
 ##############################################################################
 
 log "Installing system packages..."
-if ! dnf -y install \
+if ! sudo dnf -y install \
     epel-release \
     wget \
     git \
@@ -109,22 +117,22 @@ fi
 ##############################################################################
 
 log "Setting up PostgreSQL via PGDG repository..."
-if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
+if ! sudo dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
     log "FATAL: Failed to install PGDG repository RPM. Aborting."
     exit 1
 fi
 
-if ! dnf -qy module disable postgresql; then
+if ! sudo dnf -qy module disable postgresql; then
     log "FATAL: Failed to disable default PostgreSQL module. Aborting."
     exit 1
 fi
 
-if ! dnf -y install postgresql13 postgresql13-server postgresql13-contrib; then
+if ! sudo dnf -y install postgresql13 postgresql13-server postgresql13-contrib; then
     log "FATAL: PostgreSQL package installation failed. Aborting."
     exit 1
 fi
 
-if ! dnf clean all; then
+if ! sudo dnf clean all; then
     log "FATAL: dnf clean all failed. Aborting."
     exit 1
 fi
@@ -141,11 +149,11 @@ fi
 
 ensure_permissions() {
     mkdir -p "$POSTGRES_DATA_DIR"
-    if ! chown postgres:postgres "$POSTGRES_DATA_DIR"; then
+    if ! sudo chown postgres:postgres "$POSTGRES_DATA_DIR"; then
         log "FATAL: Failed to set ownership on $POSTGRES_DATA_DIR. Aborting."
         exit 1
     fi
-    chmod 700 "$POSTGRES_DATA_DIR"
+    sudo chmod 700 "$POSTGRES_DATA_DIR"
 }
 
 psql_check() {
@@ -235,7 +243,7 @@ init_postgres() {
 ##############################################################################
 
 log "Configuring PostgreSQL..."
-if ! systemctl enable postgresql-13; then
+if ! sudo systemctl enable postgresql-13; then
     log "FATAL: Could not enable PostgreSQL service. Aborting."
     exit 1
 fi
@@ -245,7 +253,7 @@ if ! init_postgres; then
     exit 1
 fi
 
-if ! systemctl start postgresql-13; then
+if ! sudo systemctl start postgresql-13; then
     log "FATAL: Could not start PostgreSQL service. Aborting."
     exit 1
 fi
@@ -262,19 +270,19 @@ log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
 ##############################################################################
 
 log "Setting up Redis..."
-if ! sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" "$REDIS_CONF_FILE"; then
+if ! sudo sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to configure Redis binding. Aborting."
     exit 1
 fi
-if ! sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
+if ! sudo sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to disable Redis protected mode. Aborting."
     exit 1
 fi
-if ! systemctl enable redis; then
+if ! sudo systemctl enable redis; then
     log "FATAL: Could not enable Redis service. Aborting."
     exit 1
 fi
-if ! systemctl start redis; then
+if ! sudo systemctl start redis; then
     log "FATAL: Could not start Redis service. Aborting."
     exit 1
 fi
@@ -284,7 +292,7 @@ fi
 ##############################################################################
 
 log "Configuring Node.js..."
-if ! npm install -g yarn; then
+if ! sudo npm install -g yarn; then
     log "FATAL: Failed to install Yarn. Aborting."
     exit 1
 fi
@@ -302,7 +310,7 @@ if ! python3.11 -m pip install --upgrade pip; then
     log "FATAL: Failed to upgrade pip. Aborting."
     exit 1
 fi
-if ! alternatives --set python3 /usr/bin/python3.11; then
+if ! sudo alternatives --set python3 /usr/bin/python3.11; then
     log "FATAL: Failed to set default Python. Aborting."
     exit 1
 fi
@@ -346,11 +354,11 @@ fi
 git clone "$TEXT_FILES_REPO" "$TEXT_FILES_DIR"
 
 log "Copying text configuration files..."
-cp "$TEXT_FILES_DIR/our-logs.conf" /etc/logrotate.d/our-logs
-cp "$TEXT_FILES_DIR/backup_postgres.sh" /usr/local/bin/backup_postgres.sh
-cp "$TEXT_FILES_DIR/superset_config.py" "$SUPERSET_CONFIG_PATH"
-cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services.sh
-chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services.sh
+sudo cp "$TEXT_FILES_DIR/our-logs.conf" /etc/logrotate.d/our-logs
+sudo cp "$TEXT_FILES_DIR/backup_postgres.sh" /usr/local/bin/backup_postgres.sh
+sudo cp "$TEXT_FILES_DIR/superset_config.py" "$SUPERSET_CONFIG_PATH"
+sudo cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services.sh
+sudo chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services.sh
 
 # Download blob files (binary artifacts) from S3/Minio.
 declare -A blob_files=(
@@ -379,30 +387,30 @@ if ! tar -xzf "$AFFINE_HOME/affine.tar.gz" -C "$AFFINE_HOME" --strip-components=
     exit 1
 fi
 rm -f "$AFFINE_HOME/affine.tar.gz"
-if ! chown -R $SUDO_USER:$SUDO_USER "$AFFINE_HOME"; then
+if ! sudo chown -R $SUDO_USER:$SUDO_USER "$AFFINE_HOME"; then
     log "FATAL: Failed to set ownership for AFFiNE. Aborting."
     exit 1
 fi
-find "$AFFINE_HOME" -type d -exec chmod 755 {} \;
-find "$AFFINE_HOME" -type f -exec chmod 644 {} \;
+find "$AFFINE_HOME" -type d -exec sudo chmod 755 {} \;
+find "$AFFINE_HOME" -type f -exec sudo chmod 644 {} \;
 
 ##############################################################################
 # MAINTENANCE CONFIGURATION
 ##############################################################################
 
 log "Configuring maintenance jobs..."
-if ! chmod +x /usr/local/bin/backup_postgres.sh; then
+if ! sudo chmod +x /usr/local/bin/backup_postgres.sh; then
     log "FATAL: Failed to make backup_postgres.sh executable. Aborting."
     exit 1
 fi
-if ! chmod +x /usr/local/bin/services.sh; then
+if ! sudo chmod +x /usr/local/bin/services.sh; then
     log "FATAL: Failed to make services.sh executable. Aborting."
     exit 1
 fi
-mkdir -p /var/lib/logs /var/log/redis /mnt/pgdb_backups
+sudo mkdir -p /var/lib/logs /var/log/redis /mnt/pgdb_backups
 
-echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
-echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
+echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' | sudo tee /etc/cron.d/logrotate >/dev/null
+echo '0 3 * * * /usr/local/bin/backup_postgres.sh' | sudo tee /etc/cron.d/pgbackup >/dev/null
 
 ##############################################################################
 # INIT SUPERSET
