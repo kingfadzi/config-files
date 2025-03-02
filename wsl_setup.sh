@@ -317,18 +317,25 @@ if ! alternatives --set python3 /usr/bin/python3.11; then
 fi
 
 ##############################################################################
-# APACHE SUPERSET INSTALLATION
+# APACHE SUPERSET INSTALLATION & VENV CREATION
 ##############################################################################
 
-log "Installing Apache Superset..."
-if ! python3.11 -m pip install --upgrade setuptools wheel; then
-    log "FATAL: Failed to upgrade setuptools and wheel. Aborting."
+log "Creating Python virtual environment for Superset..."
+if [ ! -d "$SUPERSET_HOME/env" ]; then
+    python3.11 -m venv "$SUPERSET_HOME/env"
+fi
+
+log "Activating virtual environment and installing Apache Superset..."
+source "$SUPERSET_HOME/env/bin/activate"
+if ! pip install --upgrade pip setuptools wheel; then
+    log "FATAL: Failed to upgrade pip/setuptools/wheel in venv. Aborting."
     exit 1
 fi
-if ! python3.11 -m pip install "apache-superset[postgres]==4.1.0rc3"; then
-    log "FATAL: Failed to install Apache Superset. Aborting."
+if ! pip install "apache-superset[postgres]==4.1.0rc3"; then
+    log "FATAL: Failed to install Apache Superset in venv. Aborting."
     exit 1
 fi
+deactivate
 
 ##############################################################################
 # FILE MANAGEMENT: Creating application directories
@@ -419,7 +426,9 @@ echo "- Superset: 8099"
 echo "- AFFiNE: $AFFINE_HOME"
 echo "=================================================="
 echo "Post-Installation Steps:"
-echo "1. Start Metabase:"
+echo "1. To initialize Superset (if not already done), run:"
+echo "   sudo /usr/local/bin/services.sh start superset"
+echo "2. Start Metabase with:"
 echo "   java -jar $METABASE_HOME/metabase.jar"
-echo "2. Verify backups:"
+echo "3. Verify backups with:"
 echo "   ls -l /mnt/pgdb_backups"
