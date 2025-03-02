@@ -1,15 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
+# SUDO CHECK
+##############################################################################
+if [ -z "${SUDO_USER:-}" ]; then
+    echo "[ERROR] This script must be run using sudo." >&2
+    exit 1
+fi
+
+##############################################################################
 # CONFIG
 ##############################################################################
 
 # Determine the real home directory for installations.
-if [ -n "${SUDO_USER:-}" ]; then
-    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-else
-    USER_HOME="$HOME"
-fi
+USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
 LOG_FILE="/var/log/services.log"
 
