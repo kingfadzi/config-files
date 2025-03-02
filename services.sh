@@ -23,7 +23,8 @@ POSTGRES_LOG_DIR="/var/lib/logs"
 PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
-PG_MAX_WAIT=10
+# Increase PG_MAX_WAIT to 60 seconds.
+PG_MAX_WAIT=60
 
 # Redis
 REDIS_CONF_FILE="/etc/redis.conf"
@@ -51,6 +52,8 @@ SUPERSET_HOME="$USER_HOME/tools/superset"
 SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
 SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
 SUPERSET_PORT="8099"
+# Full path to the superset command inside the virtual environment
+SUPERSET_CMD="$SUPERSET_HOME/env/bin/superset"
 
 ##############################################################################
 # LOGGING & HELPERS
@@ -185,14 +188,14 @@ start_affine() {
     cd "$AFFINE_HOME" || return 1
     nohup sh -c 'node ./scripts/self-host-predeploy && node --loader ./scripts/loader.js ./dist/index.js' \
       > "$AFFINE_LOG_DIR/affine_log.log" 2>&1 &
-    for i in {1..30}; do
+    for i in {1..60}; do
         if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
             log "AFFiNE started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: AFFiNE failed to start after 30 seconds."
+    log "ERROR: AFFiNE failed to start after 60 seconds."
     return 1
 }
 
@@ -224,14 +227,14 @@ start_metabase() {
     cd "$METABASE_HOME" || return 1
     nohup java -jar "$METABASE_JAR" \
       > "$METABASE_LOG_DIR/metabase_log.log" 2>&1 &
-    for i in {1..30}; do
+    for i in {1..60}; do
         if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
             log "Metabase started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: Metabase failed to start after 30 seconds."
+    log "ERROR: Metabase failed to start after 60 seconds."
     return 1
 }
 
@@ -313,19 +316,18 @@ start_superset() {
         return 0
     fi
     cd "$SUPERSET_HOME" || return 1
-    # Explicitly export SUPERSET_HOME so that the configuration picks it up
     export SUPERSET_HOME="$SUPERSET_HOME"
     log "Starting Superset..."
     nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
       > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
-    for i in {1..30}; do
+    for i in {1..60}; do
         if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
             log "Superset started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: Superset failed to start after 30 seconds."
+    log "ERROR: Superset failed to start after 60 seconds."
     return 1
 }
 
@@ -349,9 +351,9 @@ start_all() {
     log "Starting all services..."
     start_postgres || { log "ERROR: Postgres is required."; return 1; }
     start_redis || { log "ERROR: Redis is required."; return 1; }
-    start_affine || return 1
     start_metabase || return 1
     start_superset || return 1
+    start_affine || return 1
     log "All services started."
     return 0
 }
