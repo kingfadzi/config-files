@@ -26,8 +26,13 @@ fi
 # CONFIGURATION VARIABLES
 ##############################################################################
 
+if [ -z "${SUDO_USER:-}" ] && [ "$EUID" -ne 0 ]; then
+    log "FATAL: Script must be run with sudo or as root."
+    exit 1
+fi
+
 # Determine the real home directory for installations.
-USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
 
 # Default repave the installation to true.
 REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
