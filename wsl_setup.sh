@@ -3,18 +3,30 @@ set -euo pipefail
 trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 
 ##############################################################################
-# SUDO CHECK
+# SUDO USER CREATION (if running as root without a sudo user)
 ##############################################################################
-if [ -z "${SUDO_USER:-}" ]; then
-    echo "[ERROR] This script must be run using sudo." >&2
-    exit 1
+if [ "$EUID" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
+    # Use NEW_USER environment variable if provided, otherwise default to "fadzi"
+    NEW_USER=${NEW_USER:-"fadzi"}
+    if ! id -u "$NEW_USER" >/dev/null 2>&1; then
+        echo "[INFO] Creating new user: $NEW_USER"
+        useradd -m "$NEW_USER"
+        # Set a default password; you should change this later.
+        echo "$NEW_USER:changeme" | chpasswd
+        # Add the user to the wheel group for sudo privileges.
+        usermod -aG wheel "$NEW_USER"
+        # Allow passwordless sudo for the new user.
+        echo "$NEW_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$NEW_USER
+    fi
+    echo "[INFO] Re-executing script as $NEW_USER..."
+    exec sudo -u "$NEW_USER" -i bash "$0" "$@"
 fi
 
 ##############################################################################
 # CONFIGURATION VARIABLES
 ##############################################################################
 
-# Determine the real home directory to use for installations.
+# Determine the real home directory for installations.
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
 # Default repave the installation to true.
@@ -39,7 +51,7 @@ export SUPERSET_HOME="$USER_HOME/tools/superset"
 export SUPERSET_CONFIG_PATH="$SUPERSET_HOME/superset_config.py"
 export METABASE_HOME="$USER_HOME/tools/metabase"
 export AFFINE_HOME="$USER_HOME/tools/affinity-main"
-# Blob files (binary artifacts) still come from S3/Minio.
+# Blob files (binary artifacts) come from S3/Minio.
 export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
 export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
 export INITDB_BIN="/usr/pgsql-13/bin/initdb"
@@ -61,7 +73,7 @@ log() {
 ##############################################################################
 
 if [ "$REPAVE_INSTALLATION" = "true" ]; then
-    echo "[INFO] Repave flag detected (default=true). Stopping services and removing old installation files..."
+    echo "[INFO] Repave flag detected. Stopping services and removing old installation files..."
     systemctl stop postgresql-13 || true
     systemctl stop redis || true
     rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
@@ -69,11 +81,10 @@ if [ "$REPAVE_INSTALLATION" = "true" ]; then
 fi
 
 ##############################################################################
-# CHECK FOR ROOT PRIVILEGES
+# CHECK FOR ROOT PRIVILEGES (if still running as root, exit)
 ##############################################################################
-
-if [ "$EUID" -ne 0 ]; then
-    log "FATAL: This script must be run as root (use sudo)"
+if [ "$EUID" -eq 0 ]; then
+    log "FATAL: This script should not be run as root. It must be executed via sudo as the non-root user."
     exit 1
 fi
 
@@ -167,7 +178,7 @@ restore_backup() {
     local backup_file="${db}.dump"
     local backup_url="${MINIO_BASE_URL}/${backup_file}"
     local backup_path="/tmp/${backup_file}"
-    
+
     log "Downloading ${db} backup from Minio: ${backup_url}"
     if ! wget -q "${backup_url}" -O "$backup_path"; then
         log "FATAL: No backup found for ${db} at URL: ${backup_url}. Aborting."
@@ -414,21 +425,260 @@ echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
 echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
 
 ##############################################################################
-# FINALIZATION
+# INIT SUPERSET
 ##############################################################################
 
-log "Provisioning complete!"
-echo "=================================================="
-echo "Service Summary:"
-echo "- PostgreSQL: 5432 (Databases: $PG_DATABASES)"
-echo "- Redis: 6379"
-echo "- Superset: 8099"
-echo "- AFFiNE: $AFFINE_HOME"
-echo "=================================================="
-echo "Post-Installation Steps:"
-echo "1. To initialize Superset (if not already done), run:"
-echo "   sudo /usr/local/bin/services.sh start superset"
-echo "2. Start Metabase with:"
-echo "   java -jar $METABASE_HOME/metabase.jar"
-echo "3. Verify backups with:"
-echo "   ls -l /mnt/pgdb_backups"
+init_superset() {
+    # Ensure Postgres is running
+    if ! psql_check; then
+        log "ERROR: PostgreSQL is not running; cannot init Superset."
+        return 1
+    fi
+
+    # Ensure Redis is running
+    if ! redis_check; then
+        log "ERROR: Redis is not running; cannot init Superset."
+        return 1
+    fi
+
+    export FLASK_APP=superset
+    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+
+    ensure_dir "$SUPERSET_LOG_DIR"
+    local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
+
+    log "Initializing Superset (logging to $LOGFILE)..."
+
+    # 1) Database upgrade
+    "$SUPERSET_HOME/env/bin/superset" db upgrade >> "$LOGFILE" 2>&1
+
+    # 2) Create admin user
+    "$SUPERSET_HOME/env/bin/superset" fab create-admin \
+        --username admin \
+        --password admin \
+        --firstname Admin \
+        --lastname User \
+        --email admin@admin.com \
+        >> "$LOGFILE" 2>&1
+
+    # 3) Finalize
+    "$SUPERSET_HOME/env/bin/superset" init >> "$LOGFILE" 2>&1
+
+    touch "$SUPERSET_HOME/.superset_init_done"
+
+    log "Superset initialization complete."
+    return 0
+}
+
+start_superset() {
+    if ! psql_check; then
+        log "ERROR: Postgres is not running; cannot start Superset."
+        return 1
+    fi
+    if ! redis_check; then
+        log "ERROR: Redis is not running; cannot start Superset."
+        return 1
+    fi
+    if [ ! -f "$SUPERSET_HOME/.superset_init_done" ]; then
+        log "Superset not initialized. Initializing now..."
+        init_superset || { log "FATAL: Superset initialization failed."; return 1; }
+    fi
+    ensure_dir "$SUPERSET_HOME"
+    ensure_dir "$SUPERSET_LOG_DIR"
+    if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
+        log "Superset is already running."
+        return 0
+    fi
+    cd "$SUPERSET_HOME" || return 1
+    export SUPERSET_HOME="$SUPERSET_HOME"
+    log "Starting Superset..."
+    nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
+      > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
+    for i in {1..60}; do
+        if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
+            log "Superset started."
+            return 0
+        fi
+        sleep 1
+    done
+    log "ERROR: Superset failed to start after 60 seconds."
+    return 1
+}
+
+stop_superset() {
+    log "Stopping Superset..."
+    pkill -f "superset run"
+    sleep 1
+    if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
+        log "ERROR: Superset did not stop."
+        return 1
+    fi
+    log "Superset stopped."
+    return 0
+}
+
+##############################################################################
+# START/STOP ALL
+##############################################################################
+
+start_all() {
+    log "Starting all services..."
+    start_postgres || { log "ERROR: Postgres is required."; return 1; }
+    start_redis || { log "ERROR: Redis is required."; return 1; }
+    start_metabase || return 1
+    start_superset || return 1
+    start_affine || return 1
+    log "All services started."
+    return 0
+}
+
+stop_all() {
+    log "Stopping all services..."
+    stop_superset
+    stop_metabase
+    stop_affine
+    stop_redis
+    stop_postgres
+    log "All services stopped."
+}
+
+##############################################################################
+# RESTART
+##############################################################################
+
+restart_postgres() {
+    stop_postgres
+    start_postgres
+}
+
+restart_redis() {
+    stop_redis
+    start_redis
+}
+
+restart_affine() {
+    stop_affine
+    start_affine
+}
+
+restart_metabase() {
+    stop_metabase
+    start_metabase
+}
+
+restart_superset() {
+    stop_superset
+    start_superset
+}
+
+restart_all() {
+    log "Restarting all services..."
+    stop_all
+    start_all
+}
+
+##############################################################################
+# STATUS FUNCTIONS
+##############################################################################
+
+status_postgres() {
+    if psql_check; then
+        log "PostgreSQL is running."
+    else
+        log "PostgreSQL is NOT running."
+    fi
+}
+
+status_redis() {
+    if pgrep -f "redis-server" &>/dev/null; then
+        log "Redis is running."
+    else
+        log "Redis is NOT running."
+    fi
+}
+
+status_affine() {
+    if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
+        log "AFFiNE is running."
+    else
+        log "AFFiNE is NOT running."
+    fi
+}
+
+status_metabase() {
+    if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
+        log "Metabase is running."
+    else
+        log "Metabase is NOT running."
+    fi
+}
+
+status_superset() {
+    if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
+        log "Superset is running."
+    else
+        log "Superset is NOT running."
+    fi
+}
+
+status_all() {
+    status_postgres
+    status_redis
+    status_affine
+    status_metabase
+    status_superset
+}
+
+##############################################################################
+# MENU
+##############################################################################
+
+case "$1" in
+    start)
+        case "$2" in
+            all) start_all ;;
+            postgres) start_postgres ;;
+            redis) start_redis ;;
+            affine) start_affine ;;
+            metabase) start_metabase ;;
+            superset) start_superset ;;
+            *) echo "Usage: $0 start {all|postgres|redis|affine|metabase|superset}" ;;
+        esac
+        ;;
+    stop)
+        case "$2" in
+            all) stop_all ;;
+            postgres) stop_postgres ;;
+            redis) stop_redis ;;
+            affine) stop_affine ;;
+            metabase) stop_metabase ;;
+            superset) stop_superset ;;
+            *) echo "Usage: $0 stop {all|postgres|redis|affine|metabase|superset}" ;;
+        esac
+        ;;
+    restart)
+        case "$2" in
+            all) restart_all ;;
+            postgres) restart_postgres ;;
+            redis) restart_redis ;;
+            affine) restart_affine ;;
+            metabase) restart_metabase ;;
+            superset) restart_superset ;;
+            *) echo "Usage: $0 restart {all|postgres|redis|affine|metabase|superset}" ;;
+        esac
+        ;;
+    status)
+        case "$2" in
+            all) status_all ;;
+            postgres) status_postgres ;;
+            redis) status_redis ;;
+            affine) status_affine ;;
+            metabase) status_metabase ;;
+            superset) status_superset ;;
+            *) echo "Usage: $0 status {all|postgres|redis|affine|metabase|superset}" ;;
+        esac
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status} {service|all}"
+        ;;
+esac
