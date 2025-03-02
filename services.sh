@@ -1,15 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
+# SUDO CHECK
+##############################################################################
+if [ -z "${SUDO_USER:-}" ]; then
+    echo "[ERROR] This script must be run using sudo." >&2
+    exit 1
+fi
+
+##############################################################################
 # CONFIG
 ##############################################################################
 
 # Determine the real home directory for installations.
-if [ -n "${SUDO_USER:-}" ]; then
-    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-else
-    USER_HOME="$HOME"
-fi
+USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
 LOG_FILE="/var/log/services.log"
 
@@ -19,7 +23,8 @@ POSTGRES_LOG_DIR="/var/lib/logs"
 PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
-PG_MAX_WAIT=10
+# Increase PG_MAX_WAIT to 60 seconds.
+PG_MAX_WAIT=60
 
 # Redis
 REDIS_CONF_FILE="/etc/redis.conf"
@@ -47,6 +52,8 @@ SUPERSET_HOME="$USER_HOME/tools/superset"
 SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
 SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
 SUPERSET_PORT="8099"
+# Full path to the superset command inside the virtual environment
+SUPERSET_CMD="$SUPERSET_HOME/env/bin/superset"
 
 ##############################################################################
 # LOGGING & HELPERS
@@ -66,6 +73,10 @@ ensure_dir() {
         log "Creating directory: $dirpath"
         mkdir -p "$dirpath"
     fi
+}
+
+redis_check() {
+    pgrep -f "redis-server" &>/dev/null
 }
 
 ##############################################################################
@@ -177,14 +188,14 @@ start_affine() {
     cd "$AFFINE_HOME" || return 1
     nohup sh -c 'node ./scripts/self-host-predeploy && node --loader ./scripts/loader.js ./dist/index.js' \
       > "$AFFINE_LOG_DIR/affine_log.log" 2>&1 &
-    for i in {1..30}; do
+    for i in {1..60}; do
         if ss -tnlp | grep ":$AFFINE_PORT" &>/dev/null; then
             log "AFFiNE started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: AFFiNE failed to start after 30 seconds."
+    log "ERROR: AFFiNE failed to start after 60 seconds."
     return 1
 }
 
@@ -216,14 +227,14 @@ start_metabase() {
     cd "$METABASE_HOME" || return 1
     nohup java -jar "$METABASE_JAR" \
       > "$METABASE_LOG_DIR/metabase_log.log" 2>&1 &
-    for i in {1..30}; do
+    for i in {1..60}; do
         if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
             log "Metabase started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: Metabase failed to start after 30 seconds."
+    log "ERROR: Metabase failed to start after 60 seconds."
     return 1
 }
 
@@ -240,21 +251,63 @@ stop_metabase() {
 }
 
 ##############################################################################
-# SUPERSET
+# SUPERSET INIT & START/STOP
 ##############################################################################
+
+init_superset() {
+    # Ensure Postgres is running
+    if ! psql_check; then
+        log "ERROR: PostgreSQL is not running; cannot init Superset."
+        return 1
+    fi
+
+    # Ensure Redis is running
+    if ! redis_check; then
+        log "ERROR: Redis is not running; cannot init Superset."
+        return 1
+    fi
+
+    export FLASK_APP=superset
+    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+
+    ensure_dir "$SUPERSET_LOG_DIR"
+    local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
+
+    log "Initializing Superset (logging to $LOGFILE)..."
+
+    # 1) Database upgrade
+    "$SUPERSET_HOME/env/bin/superset" db upgrade >> "$LOGFILE" 2>&1
+
+    # 2) Create admin user
+    "$SUPERSET_HOME/env/bin/superset" fab create-admin \
+        --username admin \
+        --password admin \
+        --firstname Admin \
+        --lastname User \
+        --email admin@admin.com \
+        >> "$LOGFILE" 2>&1
+
+    # 3) Finalize
+    "$SUPERSET_HOME/env/bin/superset" init >> "$LOGFILE" 2>&1
+
+    touch "$SUPERSET_HOME/.superset_init_done"
+
+    log "Superset initialization complete."
+    return 0
+}
 
 start_superset() {
     if ! psql_check; then
         log "ERROR: Postgres is not running; cannot start Superset."
         return 1
     fi
-    if ! pgrep -f "redis-server" &>/dev/null; then
+    if ! redis_check; then
         log "ERROR: Redis is not running; cannot start Superset."
         return 1
     fi
     if [ ! -f "$SUPERSET_HOME/.superset_init_done" ]; then
-        log "ERROR: Superset not initialized. Initialization must be done separately."
-        return 1
+        log "Superset not initialized. Initializing now..."
+        init_superset || { log "FATAL: Superset initialization failed."; return 1; }
     fi
     ensure_dir "$SUPERSET_HOME"
     ensure_dir "$SUPERSET_LOG_DIR"
@@ -263,20 +316,18 @@ start_superset() {
         return 0
     fi
     cd "$SUPERSET_HOME" || return 1
-    source env/bin/activate
-    export FLASK_APP=superset
-    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+    export SUPERSET_HOME="$SUPERSET_HOME"
     log "Starting Superset..."
-    nohup superset run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
+    nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
       > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
-    for i in {1..30}; do
+    for i in {1..60}; do
         if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
             log "Superset started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: Superset failed to start after 30 seconds."
+    log "ERROR: Superset failed to start after 60 seconds."
     return 1
 }
 
@@ -300,9 +351,9 @@ start_all() {
     log "Starting all services..."
     start_postgres || { log "ERROR: Postgres is required."; return 1; }
     start_redis || { log "ERROR: Redis is required."; return 1; }
-    start_affine || return 1
     start_metabase || return 1
     start_superset || return 1
+    start_affine || return 1
     log "All services started."
     return 0
 }
