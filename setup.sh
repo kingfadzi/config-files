@@ -3,47 +3,64 @@ set -euo pipefail
 trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
 
 ##############################################################################
-# SUDO USER CREATION (if running as root without a sudo user)
+# SUDO CHECK
 ##############################################################################
-if [ "$EUID" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
-    # Use NEW_USER environment variable if provided, otherwise default to "xxxxx"
-    NEW_USER=${NEW_USER:-"fadzi"}
-    if ! id -u "$NEW_USER" >/dev/null 2>&1; then
-        echo "[INFO] Creating new user: $NEW_USER"
-        useradd -m "$NEW_USER"
-        # Set a default password; you should change this later.
-        echo "$NEW_USER:changeme" | chpasswd
-        # Add the user to the wheel group for sudo privileges.
-        usermod -aG wheel "$NEW_USER"
-        # Allow passwordless sudo for the new user.
-        echo "$NEW_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$NEW_USER
-    fi
-    echo "[INFO] Re-executing script as $NEW_USER..."
-    exec sudo -u "$NEW_USER" -i bash "$0" "$@"
+if [ -z "${SUDO_USER:-}" ]; then
+    echo "[ERROR] This script must be run using sudo." >&2
+    exit 1
 fi
 
 ##############################################################################
 # CONFIGURATION VARIABLES
 ##############################################################################
 
-if [ -z "${SUDO_USER:-}" ] && [ "$EUID" -ne 0 ]; then
-    log "FATAL: Script must be run with sudo or as root."
-    exit 1
-fi
-
 # Determine the real home directory for installations.
-USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+LOG_FILE="/var/log/services.log"
 
-# Default repave the installation to true.
-REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
+# Postgres
+POSTGRES_DATA_DIR="/var/lib/pgsql/data"
+POSTGRES_LOG_DIR="/var/lib/logs"
+PGCTL_BIN="/usr/bin/pg_ctl"
+PG_HOST="127.0.0.1"
+PG_PORT="5432"
+PG_MAX_WAIT=30
+
+# Redis
+REDIS_CONF_FILE="/etc/redis.conf"
+
+# AFFiNE
+AFFINE_HOME="$USER_HOME/tools/affinity-main"
+AFFINE_LOG_DIR="$AFFINE_HOME/logs"
+AFFINE_PORT="3010"
+
+# Metabase
+METABASE_HOME="$USER_HOME/tools/metabase"
+METABASE_LOG_DIR="$METABASE_HOME/logs"
+METABASE_PORT="3000"
+METABASE_JAR="metabase.jar"
+
+export MB_DB_TYPE="postgres"
+export MB_DB_DBNAME="metabase"
+export MB_DB_PORT="5432"
+export MB_DB_USER="postgres"
+export MB_DB_PASS="postgres"
+export MB_DB_HOST="localhost"
+
+# Superset
+SUPERSET_HOME="$USER_HOME/tools/superset"
+SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
+SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
+SUPERSET_PORT="8099"
+SUPERSET_CMD="$SUPERSET_HOME/env/bin/superset"
 
 # Git repository for text configuration files.
 TEXT_FILES_REPO="https://github.com/kingfadzi/config-files.git"
 # Temporary directory to clone the repository.
 TEXT_FILES_DIR="/tmp/config-files"
 
-# Declare Redis configuration file variable.
-REDIS_CONF_FILE="/etc/redis.conf"
+# Blob files come from S3/Minio.
+export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
 
 ##############################################################################
 # ENVIRONMENT CONFIGURATION
@@ -52,18 +69,11 @@ REDIS_CONF_FILE="/etc/redis.conf"
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 export PYTHONUNBUFFERED=1
-export SUPERSET_HOME="$USER_HOME/tools/superset"
-export SUPERSET_CONFIG_PATH="$SUPERSET_HOME/superset_config.py"
-export METABASE_HOME="$USER_HOME/tools/metabase"
-export AFFINE_HOME="$USER_HOME/tools/affinity-main"
-# Blob files (binary artifacts) come from S3/Minio.
-export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
-export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
-export INITDB_BIN="/usr/bin/initdb"
-export PGCTL_BIN="/usr/bin/pg_ctl"
-export PG_RESTORE_BIN="/usr/bin/pg_restore"
-export PG_MAX_WAIT=30
-export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
+
+export SUPERSET_HOME
+export SUPERSET_CONFIG_PATH
+export METABASE_HOME
+export AFFINE_HOME
 
 ##############################################################################
 # LOGGING FUNCTION
@@ -77,23 +87,23 @@ log() {
 # PRE-INSTALLATION: REPAVE
 ##############################################################################
 
-if [ "$REPAVE_INSTALLATION" = "true" ]; then
+if [ "${REPAVE_INSTALLATION:-true}" = "true" ]; then
     echo "[INFO] Repave flag detected. Stopping services and removing old installation files..."
     systemctl stop postgresql-13 || true
     systemctl stop redis || true
     rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
-    rm -rf "/var/lib/pgsql/data"
+    rm -rf "$POSTGRES_DATA_DIR"
 fi
 
 ##############################################################################
-# CHECK FOR ROOT PRIVILEGES (if still running as root, exit)
+# CHECK FOR NON-ROOT EXECUTION
 ##############################################################################
 if [ "$EUID" -eq 0 ]; then
-    log "FATAL: This script should not be run as root. It must be executed via sudo as the non-root user."
+    log "FATAL: This script should not be run as root. Execute via sudo as a non-root user."
     exit 1
 fi
 
-# Change working directory to avoid permission issues for the postgres user.
+# Change working directory to avoid permission issues.
 cd /tmp
 
 ##############################################################################
@@ -101,30 +111,9 @@ cd /tmp
 ##############################################################################
 
 log "Installing system packages..."
-if ! dnf -y install \
-    epel-release \
-    wget \
-    git \
-    curl \
-    gcc \
-    gcc-c++ \
-    make \
-    zlib-devel \
-    bzip2 \
-    readline-devel \
-    openssl-devel \
-    libffi-devel \
-    xz-devel \
-    tar \
-    java-21-openjdk \
-    cronie \
-    logrotate \
-    sudo \
-    iproute \
-    redis \
-    python3.11 \
-    python3.11-devel \
-    nodejs; then
+if ! dnf -y install epel-release wget git curl gcc gcc-c++ make zlib-devel bzip2 \
+    readline-devel openssl-devel libffi-devel xz-devel tar java-21-openjdk cronie \
+    logrotate sudo iproute redis python3.11 python3.11-devel nodejs; then
     log "FATAL: Package installation failed. Aborting."
     exit 1
 fi
@@ -151,12 +140,6 @@ fi
 
 if ! dnf clean all; then
     log "FATAL: dnf clean all failed. Aborting."
-    exit 1
-fi
-
-# Verify postgres user exists.
-if ! id -u postgres >/dev/null 2>&1; then
-    log "FATAL: postgres user does not exist. Aborting."
     exit 1
 fi
 
@@ -369,7 +352,6 @@ mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
 ##############################################################################
 # CONFIGURATION DOWNLOADS
 ##############################################################################
-# Clone the Git repository for text configuration files.
 log "Cloning text configuration files from Git repository: $TEXT_FILES_REPO"
 if [ -d "$TEXT_FILES_DIR" ]; then
     rm -rf "$TEXT_FILES_DIR"
@@ -440,43 +422,23 @@ echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
 ##############################################################################
 
 init_superset() {
-    # Ensure Postgres is running
     if ! psql_check; then
         log "ERROR: PostgreSQL is not running; cannot init Superset."
         return 1
     fi
-
-    # Ensure Redis is running
     if ! redis_check; then
         log "ERROR: Redis is not running; cannot init Superset."
         return 1
     fi
-
     export FLASK_APP=superset
     export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
-
     ensure_dir "$SUPERSET_LOG_DIR"
     local LOGFILE="$SUPERSET_LOG_DIR/superset_init.log"
-
     log "Initializing Superset (logging to $LOGFILE)..."
-
-    # 1) Database upgrade
     "$SUPERSET_HOME/env/bin/superset" db upgrade >> "$LOGFILE" 2>&1
-
-    # 2) Create admin user
-    "$SUPERSET_HOME/env/bin/superset" fab create-admin \
-        --username admin \
-        --password admin \
-        --firstname Admin \
-        --lastname User \
-        --email admin@admin.com \
-        >> "$LOGFILE" 2>&1
-
-    # 3) Finalize
+    "$SUPERSET_HOME/env/bin/superset" fab create-admin --username admin --password admin --firstname Admin --lastname User --email admin@admin.com >> "$LOGFILE" 2>&1
     "$SUPERSET_HOME/env/bin/superset" init >> "$LOGFILE" 2>&1
-
     touch "$SUPERSET_HOME/.superset_init_done"
-
     log "Superset initialization complete."
     return 0
 }
@@ -503,16 +465,15 @@ start_superset() {
     cd "$SUPERSET_HOME" || return 1
     export SUPERSET_HOME="$SUPERSET_HOME"
     log "Starting Superset..."
-    nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
-      > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
-    for i in {1..60}; do
+    nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
+    for i in $(seq 1 $PG_MAX_WAIT); do
         if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
             log "Superset started."
             return 0
         fi
         sleep 1
     done
-    log "ERROR: Superset failed to start after 60 seconds."
+    log "ERROR: Superset failed to start after $PG_MAX_WAIT seconds."
     return 1
 }
 
