@@ -305,6 +305,8 @@ start_superset() {
     fi
     cd "$SUPERSET_HOME" || return 1
     export SUPERSET_HOME="$SUPERSET_HOME"
+    export FLASK_APP=superset
+    export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
     log "Starting Superset..."
     nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
       > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
