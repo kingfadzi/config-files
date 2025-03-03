@@ -7,7 +7,7 @@ PG_USER="${PG_USER:-postgres}"
 PG_HOST="${PG_HOST:-localhost}"
 PG_PORT="${PG_PORT:-5432}"
 PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
-LOG_FILE="${LOG_FILE:-/var/log/pg_backup.log}"
+LOG_FILE="${LOG_FILE:-/tmp/pg_backup.log}"  # Changed to /tmp for write permissions
 MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"
 PGPASSWORD="${PGPASSWORD:-postgres}"
 
@@ -19,24 +19,29 @@ exec >> "$LOG_FILE" 2>&1
 
 echo "[$(date)] Starting PostgreSQL backup..."
 
-databases=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;" 2>&1) || {
-  echo "[ERROR] Failed to retrieve database list. Skipping backup process." >&2
+databases=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;" 2>&1)
+if [ $? -ne 0 ]; then
+  echo "[ERROR] Failed to retrieve database list. Error: $databases" >&2
   exit 1
-}
+fi
 
 for db in $databases; do
-  echo "[$(date)] Backing up database: $db"
-  "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump" 2>&1 || {
-    echo "[ERROR] Failed to back up database: $db. Skipping to the next database." >&2
-    continue
-  }
+  if [[ "$db" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
+    echo "[$(date)] Backing up database: $db"
+    "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump" 2>&1 || {
+      echo "[ERROR] Failed to back up database: $db. Skipping to the next database." >&2
+      continue
+    }
 
-  echo "[$(date)] Uploading $db.dump to Minio..."
-  curl -X PUT -T "$BACKUP_DIR/$db.dump" "${MINIO_BASE_URL}/${db}.dump" 2>&1 || {
-    echo "[ERROR] Failed to upload $db.dump to Minio. Skipping to the next database." >&2
-    continue
-  }
-  echo "[$(date)] Backup for $db completed and uploaded."
+    echo "[$(date)] Uploading $db.dump to Minio..."
+    curl -X PUT -T "$BACKUP_DIR/$db.dump" "${MINIO_BASE_URL}/${db}.dump" 2>&1 || {
+      echo "[ERROR] Failed to upload $db.dump to Minio. Skipping to the next database." >&2
+      continue
+    }
+    echo "[$(date)] Backup for $db completed and uploaded."
+  else
+    echo "[WARNING] Skipping invalid database name: $db" >&2
+  fi
 done
 
 echo "[$(date)] PostgreSQL backup process completed."
