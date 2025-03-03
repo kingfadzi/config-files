@@ -280,7 +280,7 @@ if ! dnf -y module install postgresql:13/server; then
     exit 1
 fi
 
-if ! dnf -y install postgresql13-contrib; then
+if ! dnf -y install postgresql-contrib; then
     log "FATAL: PostgreSQL 13 contrib installation failed. Aborting."
     exit 1
 fi

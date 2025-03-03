@@ -17,6 +17,7 @@ LOG_FILE="/var/log/services.log"
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
 PGCTL_BIN="/usr/bin/pg_ctl"
+POSTGRES_LOCK_FILE_DIR="/var/run/postgresql"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
 PG_MAX_WAIT=60
@@ -72,6 +73,8 @@ redis_check() {
 start_postgres() {
     ensure_dir "$POSTGRES_DATA_DIR"
     ensure_dir "$POSTGRES_LOG_DIR"
+    ensure_dir "$POSTGRES_LOCK_FILE_DIR"
+
     if [ ! -f "$POSTGRES_DATA_DIR/PG_VERSION" ]; then
         log "ERROR: PostgreSQL not initialized. Please run the install script first."
         return 1
@@ -83,6 +86,7 @@ start_postgres() {
     fi
 
     chown postgres:postgres $POSTGRES_LOG_DIR
+    chown postgres:postgres $POSTGRES_LOCK_FILE_DIR
 
     log "Starting PostgreSQL..."
     sudo -u postgres bash -c "cd ${POSTGRES_DATA_DIR} && exec ${PGCTL_BIN} -D ${POSTGRES_DATA_DIR} start -l ${POSTGRES_LOG_DIR}/postgres.log"
