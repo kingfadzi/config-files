@@ -1,5 +1,5 @@
 #!/bin/bash
-DB_CONFIGS=("affine:affine" "my-db:postgres" "analytics:analytics")
+DB_CONFIGS=("my-db:postgres" "analytics:analytics")
 export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export MINIO_BASE_URL="http://localhost:9000/blobs"
 export PGHOST="localhost"
