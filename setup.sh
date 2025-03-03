@@ -49,7 +49,7 @@ export PGCTL_BIN="/usr/bin/pg_ctl"
 export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export PG_MAX_WAIT=30
 export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
-export LD_LIBRARY_PATH="/usr/pgsql-13/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/usr/pgsql-13/lib:${LD_LIBRARY_PATH:-}"
 
 ##############################################################################
 # LOGGING FUNCTION
