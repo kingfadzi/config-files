@@ -40,7 +40,7 @@ for config in "${DB_CONFIGS[@]}"; do
     IFS=":" read -r db owner <<< "$config"
 
     if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
-        sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER $owner;"
+        sudo -u postgres psql -c "CREATE DATABASE \"$db\" WITH OWNER $owner;"
         log "Created database: $db with owner: $owner"
     else
         log "Database $db already exists"
