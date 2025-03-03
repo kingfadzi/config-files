@@ -75,6 +75,113 @@ stop_postgresql() {
 }
 
 ##############################################################################
+# FUNCTION TO ENSURE PERMISSIONS
+##############################################################################
+
+ensure_permissions() {
+    mkdir -p "$POSTGRES_DATA_DIR"
+    if ! chown postgres:postgres "$POSTGRES_DATA_DIR"; then
+        log "FATAL: Failed to set ownership on $POSTGRES_DATA_DIR. Aborting."
+        exit 1
+    fi
+    chmod 700 "$POSTGRES_DATA_DIR"
+}
+
+##############################################################################
+# FUNCTION TO CHECK PSQL CONNECTION
+##############################################################################
+
+psql_check() {
+    sudo -u postgres psql -c "SELECT 1;" &>/dev/null
+    return $?
+}
+
+##############################################################################
+# FUNCTION TO RESTORE DATABASE BACKUP
+##############################################################################
+
+restore_backup() {
+    local db=$1
+    local backup_file="${db}.dump"
+    local backup_url="${MINIO_BASE_URL}/${backup_file}"
+    local backup_path="/tmp/${backup_file}"
+
+    log "Downloading ${db} backup from Minio: ${backup_url}"
+    if ! wget -q "${backup_url}" -O "$backup_path"; then
+        log "FATAL: No backup found for ${db} at URL: ${backup_url}. Aborting."
+        exit 1
+    fi
+
+    log "Restoring ${db} database..."
+    if ! sudo -u postgres "$PG_RESTORE_BIN" -d "$db" "$backup_path"; then
+        log "FATAL: Error restoring ${db} database. Aborting."
+        exit 1
+    fi
+    rm -f "$backup_path"
+}
+
+##############################################################################
+# FUNCTION TO INITIALIZE POSTGRESQL
+##############################################################################
+
+init_postgres() {
+    ensure_permissions
+    if [ -f "$POSTGRES_DATA_DIR/PG_VERSION" ]; then
+        log "PostgreSQL already initialized"
+        return 0
+    fi
+
+    log "Initializing PostgreSQL cluster..."
+    if ! sudo -u postgres "$INITDB_BIN" -D "$POSTGRES_DATA_DIR"; then
+        log "FATAL: Failed to initialize PostgreSQL cluster. Aborting."
+        exit 1
+    fi
+
+    log "Configuring network access..."
+    if ! sudo -u postgres sed -i "s/^#listen_addresses = 'localhost'/listen_addresses = '*'/" "$POSTGRES_DATA_DIR/postgresql.conf"; then
+        log "FATAL: Failed to configure postgresql.conf. Aborting."
+        exit 1
+    fi
+    echo "host all all 0.0.0.0/0 md5" | sudo -u postgres tee -a "$POSTGRES_DATA_DIR/pg_hba.conf" >/dev/null
+
+    log "Starting temporary PostgreSQL instance..."
+    if ! sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_DATA_DIR/postgres_init.log"; then
+        log "FATAL: Failed to start temporary PostgreSQL instance. Aborting."
+        exit 1
+    fi
+
+    local init_ok=false
+    for i in $(seq 1 $PG_MAX_WAIT); do
+        if psql_check; then
+            log "Securing PostgreSQL user..."
+            sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
+            log "Creating databases..."
+            for db in $PG_DATABASES; do
+                if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
+                    sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
+                    log "Created database: $db"
+                fi
+                restore_backup "$db"
+            done
+            init_ok=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$init_ok" = false ]; then
+        log "FATAL: PostgreSQL initialization failed. Aborting."
+        sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop &>/dev/null
+        exit 1
+    fi
+
+    log "Stopping initialization instance..."
+    sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
+    sleep 2
+}
+
+##############################################################################
 # PRE-INSTALLATION: REPAVE
 ##############################################################################
 
