@@ -183,15 +183,17 @@ init_postgres() {
 
             log "Creating additional databases..."
             for db in $PG_DATABASES; do
-                if [ "$db" = "affine" ]; then
-                    continue
-                fi
                 if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
-                    sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
+                    if [ "$db" = "affine" ]; then
+                        sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER affine;"
+                    else
+                        sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
+                    fi
                     log "Created database: $db"
                 fi
                 restore_backup "$db"
             done
+
 
             init_ok=true
             break
