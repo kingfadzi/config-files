@@ -108,7 +108,7 @@ stop_postgres() {
     fi
 
     log "Stopping PostgreSQL..."
-    sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
+    sudo -H -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
     local stopped_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if ! psql_check; then
