@@ -43,12 +43,13 @@ export METABASE_HOME="$USER_HOME/tools/metabase"
 export AFFINE_HOME="$USER_HOME/tools/affinity-main"
 # Blob files (binary artifacts) still come from S3/Minio.
 export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
-export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
-export INITDB_BIN="/usr/pgsql-13/bin/initdb"
-export PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
-export PG_RESTORE_BIN="/usr/pgsql-13/bin/pg_restore"
+export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
+export INITDB_BIN="/usr/bin/initdb"
+export PGCTL_BIN="/usr/bin/pg_ctl"
+export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export PG_MAX_WAIT=30
 export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
+export LD_LIBRARY_PATH="/usr/pgsql-13/lib:$LD_LIBRARY_PATH"
 
 ##############################################################################
 # LOGGING FUNCTION
@@ -265,11 +266,11 @@ if ! dnf -y module install postgresql:13/server; then
     log "FATAL: PostgreSQL 13 module installation failed. Aborting."
     exit 1
 fi
-# Set environment variables for the default installation.
-export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
-export INITDB_BIN="/usr/bin/initdb"
-export PGCTL_BIN="/usr/bin/pg_ctl"
-export PG_RESTORE_BIN="/usr/bin/pg_restore"
+
+if ! dnf -y install postgresql13-contrib; then
+    log "FATAL: PostgreSQL 13 contrib installation failed. Aborting."
+    exit 1
+fi
 
 
 if ! dnf clean all; then
