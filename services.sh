@@ -12,33 +12,27 @@ fi
 # CONFIG
 ##############################################################################
 
-# Determine the real home directory for installations.
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-
 LOG_FILE="/var/log/services.log"
-
-# Postgres
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 POSTGRES_LOG_DIR="/var/lib/pgsql"
 PGCTL_BIN="/usr/bin/pg_ctl"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
-# Increase PG_MAX_WAIT to 60 seconds.
 PG_MAX_WAIT=60
-
-# Redis
 REDIS_CONF_FILE="/etc/redis.conf"
-
-# AFFiNE
 AFFINE_HOME="$USER_HOME/tools/affinity-main"
 AFFINE_LOG_DIR="$AFFINE_HOME/logs"
 AFFINE_PORT="3010"
-
-# Metabase
 METABASE_HOME="$USER_HOME/tools/metabase"
 METABASE_LOG_DIR="$METABASE_HOME/logs"
 METABASE_PORT="3000"
 METABASE_JAR="metabase.jar"
+SUPERSET_HOME="$USER_HOME/tools/superset"
+SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
+SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
+SUPERSET_PORT="8099"
+SUPERSET_CMD="$SUPERSET_HOME/env/bin/superset"
 
 export MB_DB_TYPE="postgres"
 export MB_DB_DBNAME="metabase"
@@ -46,14 +40,6 @@ export MB_DB_PORT="5432"
 export MB_DB_USER="postgres"
 export MB_DB_PASS="postgres"
 export MB_DB_HOST="localhost"
-
-# Superset
-SUPERSET_HOME="$USER_HOME/tools/superset"
-SUPERSET_CONFIG="$SUPERSET_HOME/superset_config.py"
-SUPERSET_LOG_DIR="$SUPERSET_HOME/logs"
-SUPERSET_PORT="8099"
-# Full path to the superset command inside the virtual environment
-SUPERSET_CMD="$SUPERSET_HOME/env/bin/superset"
 
 ##############################################################################
 # LOGGING & HELPERS
@@ -261,7 +247,6 @@ init_superset() {
         return 1
     fi
 
-    # Ensure Redis is running
     if ! redis_check; then
         log "ERROR: Redis is not running; cannot init Superset."
         return 1
@@ -275,10 +260,8 @@ init_superset() {
 
     log "Initializing Superset (logging to $LOGFILE)..."
 
-    # 1) Database upgrade
     "$SUPERSET_HOME/env/bin/superset" db upgrade >> "$LOGFILE" 2>&1
 
-    # 2) Create admin user
     "$SUPERSET_HOME/env/bin/superset" fab create-admin \
         --username admin \
         --password admin \
@@ -287,7 +270,6 @@ init_superset() {
         --email admin@admin.com \
         >> "$LOGFILE" 2>&1
 
-    # 3) Finalize
     "$SUPERSET_HOME/env/bin/superset" init >> "$LOGFILE" 2>&1
 
     touch "$SUPERSET_HOME/.superset_init_done"
