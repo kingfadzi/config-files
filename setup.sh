@@ -265,6 +265,7 @@ if ! dnf -y install --disablerepo=epel \
     logrotate \
     sudo \
     iproute \
+    procps-ng \
     redis \
     python3.11 \
     python3.11-devel \
