@@ -18,9 +18,9 @@ USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 LOG_FILE="/var/log/services.log"
 
 # Postgres
-POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
-POSTGRES_LOG_DIR="/var/lib/logs"
-PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
+POSTGRES_DATA_DIR="/var/lib/pgsql/data"
+POSTGRES_LOG_DIR="/var/lib/pgsql"
+PGCTL_BIN="/usr/bin/pg_ctl"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
 # Increase PG_MAX_WAIT to 60 seconds.
