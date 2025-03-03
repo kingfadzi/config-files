@@ -14,19 +14,10 @@ fi
 # CONFIGURATION VARIABLES
 ##############################################################################
 
-# Determine the real home directory to use for installations.
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-
-# Default repave the installation to true.
 REPAVE_INSTALLATION=${REPAVE_INSTALLATION:-true}
-
-# Git repository for text configuration files.
 TEXT_FILES_REPO="https://github.com/kingfadzi/config-files.git"
-# Temporary directory to clone the repository.
-TEXT_FILES_DIR="/tmp/config-files"
-
-# Declare Redis configuration file variable.
-REDIS_CONF_FILE="/etc/redis.conf"
+MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
 
 ##############################################################################
 # ENVIRONMENT CONFIGURATION
@@ -39,8 +30,8 @@ export SUPERSET_HOME="$USER_HOME/tools/superset"
 export SUPERSET_CONFIG_PATH="$SUPERSET_HOME/superset_config.py"
 export METABASE_HOME="$USER_HOME/tools/metabase"
 export AFFINE_HOME="$USER_HOME/tools/affinity-main"
-# Blob files (binary artifacts) still come from S3/Minio.
-export MINIO_BASE_URL="http://192.168.1.194:9000/blobs"
+export TEXT_FILES_DIR="/tmp/config-files"
+export REDIS_CONF_FILE="/etc/redis.conf"
 export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 export INITDB_BIN="/usr/bin/initdb"
 export PGCTL_BIN="/usr/bin/pg_ctl"
@@ -189,7 +180,6 @@ init_postgres() {
 
             log "Creating additional databases..."
             for db in $PG_DATABASES; do
-                # Skip 'affine' to avoid duplicating its creation if it is in PG_DATABASES
                 if [ "$db" = "affine" ]; then
                     continue
                 fi
@@ -225,7 +215,7 @@ init_postgres() {
 if [ "$REPAVE_INSTALLATION" = "true" ]; then
     echo "[INFO] Repave flag detected (default=true). Stopping services and removing old installation files..."
     stop_postgresql
-    stop_redis  # Stop Redis if running
+    stop_redis
     rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
     rm -rf "$POSTGRES_DATA_DIR"
 fi
@@ -239,7 +229,6 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Change working directory to avoid permission issues for the postgres user.
 cd /tmp
 
 ##############################################################################
@@ -285,7 +274,7 @@ dnf -y install dnf-plugins-core --disablerepo=epel || { log "FATAL: Failed to in
 
 
 log "Using default PostgreSQL modules installation via dnf for PostgreSQL 13."
-# This single command enables the PostgreSQL 13 server module and installs the packages.
+
 if ! dnf -y module install postgresql:13/server; then
     log "FATAL: PostgreSQL 13 module installation failed. Aborting."
     exit 1
@@ -302,7 +291,6 @@ if ! dnf clean all; then
     exit 1
 fi
 
-# Verify postgres user exists.
 if ! id -u postgres >/dev/null 2>&1; then
     log "FATAL: postgres user does not exist. Aborting."
     exit 1
@@ -355,9 +343,8 @@ start_redis() {
 }
 
 log "Setting up Redis..."
-stop_redis  # Stop Redis if running
+stop_redis
 
-# Configure Redis to run as a daemon
 if ! sed -i "s/^daemonize no/daemonize yes/" "$REDIS_CONF_FILE"; then
     log "WARNING: Failed to configure Redis to run as a daemon. Continuing..."
 fi
@@ -371,23 +358,12 @@ if ! sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
     exit 1
 fi
 
-# Ensure Redis log directory exists and has proper permissions
 sudo mkdir -p /var/log/redis
 sudo chown redis:redis /var/log/redis
 
 log "Starting Redis..."
 if ! start_redis; then
     log "FATAL: Could not start Redis service. Aborting."
-    log "Check Redis logs at /var/log/redis/redis.log for more details."
-    exit 1
-fi
-
-# Wait for Redis to start
-sleep 10  # Give Redis time to start
-
-# Verify Redis is running
-if ! pgrep redis-server >/dev/null; then
-    log "FATAL: Redis failed to start. Aborting."
     log "Check Redis logs at /var/log/redis/redis.log for more details."
     exit 1
 fi
@@ -453,7 +429,7 @@ mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
 ##############################################################################
 # CONFIGURATION DOWNLOADS
 ##############################################################################
-# Clone the Git repository for text configuration files.
+
 log "Cloning text configuration files from Git repository: $TEXT_FILES_REPO"
 if [ -d "$TEXT_FILES_DIR" ]; then
     rm -rf "$TEXT_FILES_DIR"
@@ -467,7 +443,6 @@ cp "$TEXT_FILES_DIR/superset_config.py" "$SUPERSET_CONFIG_PATH"
 cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services.sh
 chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services.sh
 
-# Download blob files (binary artifacts) from S3/Minio.
 declare -A blob_files=(
     ["metabase.jar"]="$METABASE_HOME/metabase.jar"
     ["affine.tar.gz"]="$AFFINE_HOME/affine.tar.gz"
@@ -515,6 +490,7 @@ if ! chmod +x /usr/local/bin/services.sh; then
     exit 1
 fi
 mkdir -p /var/lib/logs /var/log/redis /mnt/pgdb_backups
+chmod 755 -R /mnt/pgdb_backups
 
 echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
 echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup

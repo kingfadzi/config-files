@@ -2,7 +2,7 @@
 set -uo pipefail
 trap 'echo "[ERROR] Script failed at line $LINENO" >&2' ERR
 
-BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"
+BACKUP_DIR="${BACKUP_DIR:-/mnt/pgdb_backups}"
 PG_USER="${PG_USER:-postgres}"
 PG_HOST="${PG_HOST:-192.168.1.188}"
 PG_PORT="${PG_PORT:-5422}"
