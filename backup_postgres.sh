@@ -9,7 +9,7 @@ PG_PORT="${PG_PORT:-5422}"
 PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
 LOG_FILE="${LOG_FILE:-/tmp/pg_backup.log}"
 MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"
-PGPASSWORD="${PGPASSWORD:-password}"
+PGPASSWORD="${PGPASSWORD:-postgres}"
 export PGPASSWORD
 
 mkdir -p "$BACKUP_DIR" || echo "[WARNING] Failed to create backup directory: $BACKUP_DIR" | tee -a "$LOG_FILE" >&2
