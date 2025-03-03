@@ -359,7 +359,7 @@ if ! redis-server "$REDIS_CONF_FILE" &>/var/log/redis/redis.log & then
 fi
 
 # Wait for Redis to start
-sleep 2  # Give Redis time to start
+sleep 10  # Give Redis time to start
 
 # Verify Redis is running
 if ! pgrep redis-server >/dev/null; then
