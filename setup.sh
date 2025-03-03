@@ -69,16 +69,19 @@ stop_postgresql() {
 ##############################################################################
 
 stop_redis() {
-    log "Stopping Redis..."
-    pkill -f "redis-server"
-    sleep 1
+    log "Force-stopping Redis with SIGKILL..."
+    pkill -9 -f "redis-server" || true
+    sleep 0.5
+
     if pgrep -f "redis-server" &>/dev/null; then
-        log "ERROR: Redis did not stop."
+        log "ERROR: Redis still running after SIGKILL!"
         return 1
+    else
+        log "Redis terminated forcefully."
+        return 0
     fi
-    log "Redis stopped."
-    return 0
 }
+
 
 ##############################################################################
 # FUNCTION TO ENSURE PERMISSIONS
