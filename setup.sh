@@ -332,6 +332,12 @@ log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
 
 log "Setting up Redis..."
 stop_redis  # Stop Redis if running
+
+# Configure Redis to run as a daemon
+if ! sed -i "s/^daemonize no/daemonize yes/" "$REDIS_CONF_FILE"; then
+    log "WARNING: Failed to configure Redis to run as a daemon. Continuing..."
+fi
+
 if ! sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to configure Redis binding. Aborting."
     exit 1
@@ -352,8 +358,10 @@ if ! redis-server "$REDIS_CONF_FILE" &>/var/log/redis/redis.log & then
     exit 1
 fi
 
-# Verify Redis is running
+# Wait for Redis to start
 sleep 2  # Give Redis time to start
+
+# Verify Redis is running
 if ! pgrep redis-server >/dev/null; then
     log "FATAL: Redis failed to start. Aborting."
     log "Check Redis logs at /var/log/redis/redis.log for more details."
