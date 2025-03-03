@@ -170,14 +170,35 @@ init_postgres() {
             log "Securing PostgreSQL user..."
             sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 
-            log "Creating databases..."
+            log "Ensuring affine user exists..."
+            if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'affine'" | grep -q 1; then
+                sudo -u postgres psql -c "CREATE USER affine WITH PASSWORD 'affine';"
+                log "Created user: affine"
+            else
+                log "User affine already exists"
+            fi
+
+            log "Ensuring affine database exists..."
+            if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'affine'" | grep -q 1; then
+                sudo -u postgres psql -c "CREATE DATABASE affine WITH OWNER affine;"
+                log "Created database: affine"
+            else
+                log "Database affine already exists"
+            fi
+
+            log "Creating additional databases..."
             for db in $PG_DATABASES; do
+                # Skip 'affine' to avoid duplicating its creation if it is in PG_DATABASES
+                if [ "$db" = "affine" ]; then
+                    continue
+                fi
                 if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
                     sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
                     log "Created database: $db"
                 fi
                 restore_backup "$db"
             done
+
             init_ok=true
             break
         fi
@@ -194,6 +215,7 @@ init_postgres() {
     sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
     sleep 2
 }
+
 
 ##############################################################################
 # PRE-INSTALLATION: REPAVE
