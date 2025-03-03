@@ -188,12 +188,9 @@ init_postgres() {
 if [ "$REPAVE_INSTALLATION" = "true" ]; then
     echo "[INFO] Repave flag detected (default=true). Stopping services and removing old installation files..."
     stop_postgresql
-    # Stop Redis if running
-    if pgrep redis-server >/dev/null; then
-        pkill redis-server || true
-    fi
+    stop_redis  # Stop Redis if running
     rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
-    rm -rf "/var/lib/pgsql/13/data"
+    rm -rf "$POSTGRES_DATA_DIR"
 fi
 
 ##############################################################################
@@ -321,6 +318,7 @@ log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
 ##############################################################################
 
 log "Setting up Redis..."
+stop_redis  # Stop Redis if running
 if ! sed -i "s/^# bind 127.0.0.1 ::1/bind 0.0.0.0/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to configure Redis binding. Aborting."
     exit 1
@@ -350,6 +348,19 @@ if ! pgrep redis-server >/dev/null; then
 fi
 
 log "Redis is running."
+
+##############################################################################
+# FUNCTION TO STOP REDIS
+##############################################################################
+
+stop_redis() {
+    if pgrep redis-server >/dev/null; then
+        log "Stopping Redis..."
+        pkill redis-server || { log "WARNING: Failed to stop Redis. Attempting to kill forcefully..."; pkill -9 redis-server; }
+    else
+        log "Redis is not running."
+    fi
+}
 
 ##############################################################################
 # FINALIZATION
