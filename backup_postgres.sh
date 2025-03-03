@@ -4,11 +4,12 @@ trap 'echo "[ERROR] Script failed at line $LINENO" >&2' ERR
 
 BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"
 PG_USER="${PG_USER:-postgres}"
-PG_HOST="${PG_HOST:-192.168.1.188}"
+PG_HOST="${PG_HOST:-localhost}"
 PG_PORT="${PG_PORT:-5432}"
 PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
 LOG_FILE="${LOG_FILE:-/var/log/pg_backup.log}"
 MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"
+PGPASSWORD="${PGPASSWORD:-postgres}"
 
 mkdir -p "$BACKUP_DIR" || echo "[WARNING] Failed to create backup directory: $BACKUP_DIR" >&2
 mkdir -p "$(dirname "$LOG_FILE")" || echo "[WARNING] Failed to create log directory: $(dirname "$LOG_FILE")" >&2
