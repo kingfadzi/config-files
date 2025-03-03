@@ -81,6 +81,8 @@ start_postgres() {
         log "PostgreSQL is already running."
         return 0
     fi
+    
+    chown postgres:postgres $POSTGRES_LOG_DIR
 
     log "Starting PostgreSQL..."
     sudo -u postgres bash -c "cd ~ && $PGCTL_BIN -D '$POSTGRES_DATA_DIR' start -l '$POSTGRES_LOG_DIR/postgres.log'"
