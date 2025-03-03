@@ -94,7 +94,6 @@ cd /tmp
 
 log "Installing system packages..."
 if ! dnf -y install \
-    # epel-release \
     wget \
     git \
     curl \
