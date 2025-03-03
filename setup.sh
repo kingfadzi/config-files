@@ -14,8 +14,6 @@ fi
 # CONFIGURATION VARIABLES
 ##############################################################################
 
-USE_PGDG=false
-
 # Determine the real home directory to use for installations.
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 
@@ -527,22 +525,3 @@ echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
 
 log "Provisioning complete!"
 
-##############################################################################
-# FINALIZATION
-##############################################################################
-
-log "Provisioning complete!"
-echo "=================================================="
-echo "Service Summary:"
-echo "- PostgreSQL: 5432 (Databases: $PG_DATABASES)"
-echo "- Redis: 6379"
-echo "- Superset: 8099"
-echo "- AFFiNE: $AFFINE_HOME"
-echo "=================================================="
-echo "Post-Installation Steps:"
-echo "1. To initialize Superset (if not already done), run:"
-echo "   sudo /usr/local/bin/services.sh start superset"
-echo "2. Start Metabase with:"
-echo "   java -jar $METABASE_HOME/metabase.jar"
-echo "3. Verify backups with:"
-echo "   ls -l /mnt/pgdb_backups"

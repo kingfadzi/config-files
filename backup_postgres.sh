@@ -1,40 +1,40 @@
 #!/bin/bash
-set -euo pipefail
-trap 'echo "[ERROR] Script failed at line $LINENO" >&2; exit 1' ERR
+set -uo pipefail
+trap 'echo "[ERROR] Script failed at line $LINENO" >&2' ERR
 
-# Configuration – override these with environment variables as needed.
-BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"   # Mounted folder in the container.
+BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"
 PG_USER="${PG_USER:-postgres}"
-PG_HOST="${PG_HOST:-localhost}"
+PG_HOST="${PG_HOST:-192.168.1.188}"
 PG_PORT="${PG_PORT:-5432}"
 PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
 LOG_FILE="${LOG_FILE:-/var/log/pg_backup.log}"
-MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"  # Ensure this points to your Minio bucket URL.
+MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"
 
-# (Optional) If a password is required, set it here:
-# export PGPASSWORD="${PGPASSWORD:-postgres}"
+mkdir -p "$BACKUP_DIR" || echo "[WARNING] Failed to create backup directory: $BACKUP_DIR" >&2
+mkdir -p "$(dirname "$LOG_FILE")" || echo "[WARNING] Failed to create log directory: $(dirname "$LOG_FILE")" >&2
 
-# Create backup and log directories if they don't exist.
-mkdir -p "$BACKUP_DIR"
-mkdir -p "$(dirname "$LOG_FILE")"
-
-# Create (or touch) the log file and redirect all output to it.
-touch "$LOG_FILE"
+touch "$LOG_FILE" || echo "[WARNING] Failed to create log file: $LOG_FILE" >&2
 exec >> "$LOG_FILE" 2>&1
 
 echo "[$(date)] Starting PostgreSQL backup..."
 
-# Get the list of databases (excluding templates)
-databases=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;")
+databases=$(psql -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -t -c "SELECT datname FROM pg_database WHERE datistemplate = false;" 2>&1) || {
+  echo "[ERROR] Failed to retrieve database list. Skipping backup process." >&2
+  exit 1
+}
 
 for db in $databases; do
   echo "[$(date)] Backing up database: $db"
-  # Create backup file with name "[database].dump" in custom format (-Fc).
-  "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump"
-  
+  "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump" 2>&1 || {
+    echo "[ERROR] Failed to back up database: $db. Skipping to the next database." >&2
+    continue
+  }
+
   echo "[$(date)] Uploading $db.dump to Minio..."
-  # Upload the backup file to Minio using HTTP PUT via curl.
-  curl -X PUT -T "$BACKUP_DIR/$db.dump" "${MINIO_BASE_URL}/${db}.dump"
+  curl -X PUT -T "$BACKUP_DIR/$db.dump" "${MINIO_BASE_URL}/${db}.dump" 2>&1 || {
+    echo "[ERROR] Failed to upload $db.dump to Minio. Skipping to the next database." >&2
+    continue
+  }
   echo "[$(date)] Backup for $db completed and uploaded."
 done
 
