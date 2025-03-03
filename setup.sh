@@ -258,37 +258,19 @@ log "Updating system and installing dnf-plugins-core..."
 dnf -y update --disablerepo=epel || { log "FATAL: dnf update failed. Aborting."; exit 1; }
 dnf -y install dnf-plugins-core --disablerepo=epel || { log "FATAL: Failed to install dnf-plugins-core. Aborting."; exit 1; }
 
-if [ "$USE_PGDG" = "true" ]; then
-    log "Using PGDG repository for PostgreSQL installation."
-    if ! dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; then
-        log "FATAL: Failed to install PGDG repository RPM. Aborting."
-        exit 1
-    fi
-    if ! dnf -qy module disable postgresql; then
-        log "WARNING: Failed to disable default PostgreSQL module. Continuing..."
-    fi
-    if ! dnf -y install postgresql13 postgresql13-server postgresql13-contrib; then
-        log "FATAL: PostgreSQL package installation via PGDG repository failed. Aborting."
-        exit 1
-    fi
-    # Set environment variables for PGDG installation
-    export POSTGRES_DATA_DIR="/var/lib/pgsql/13/data"
-    export INITDB_BIN="/usr/pgsql-13/bin/initdb"
-    export PGCTL_BIN="/usr/pgsql-13/bin/pg_ctl"
-    export PG_RESTORE_BIN="/usr/pgsql-13/bin/pg_restore"
-else
-    log "Using default PostgreSQL modules installation via dnf for PostgreSQL 13."
-    # This single command enables the PostgreSQL 13 server module and installs the packages.
-    if ! dnf -y module install postgresql:13/server; then
-        log "FATAL: PostgreSQL 13 module installation failed. Aborting."
-        exit 1
-    fi
-    # Set environment variables for the default installation.
-    export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
-    export INITDB_BIN="/usr/bin/initdb"
-    export PGCTL_BIN="/usr/bin/pg_ctl"
-    export PG_RESTORE_BIN="/usr/bin/pg_restore"
+
+log "Using default PostgreSQL modules installation via dnf for PostgreSQL 13."
+# This single command enables the PostgreSQL 13 server module and installs the packages.
+if ! dnf -y module install postgresql:13/server; then
+    log "FATAL: PostgreSQL 13 module installation failed. Aborting."
+    exit 1
 fi
+# Set environment variables for the default installation.
+export POSTGRES_DATA_DIR="/var/lib/pgsql/data"
+export INITDB_BIN="/usr/bin/initdb"
+export PGCTL_BIN="/usr/bin/pg_ctl"
+export PG_RESTORE_BIN="/usr/bin/pg_restore"
+
 
 if ! dnf clean all; then
     log "FATAL: dnf clean all failed. Aborting."
