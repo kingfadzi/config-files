@@ -396,6 +396,136 @@ fi
 
 log "Redis is running."
 
+##############################################################################
+# NODE.JS ENVIRONMENT SETUP
+##############################################################################
+
+log "Configuring Node.js..."
+if ! npm install -g yarn; then
+    log "FATAL: Failed to install Yarn. Aborting."
+    exit 1
+fi
+
+##############################################################################
+# PYTHON SETUP
+##############################################################################
+
+log "Setting up Python..."
+if ! python3.11 -m ensurepip --upgrade; then
+    log "FATAL: Failed to ensure Python pip. Aborting."
+    exit 1
+fi
+if ! python3.11 -m pip install --upgrade pip; then
+    log "FATAL: Failed to upgrade pip. Aborting."
+    exit 1
+fi
+if ! alternatives --set python3 /usr/bin/python3.11; then
+    log "FATAL: Failed to set default Python. Aborting."
+    exit 1
+fi
+
+##############################################################################
+# APACHE SUPERSET INSTALLATION & VENV CREATION
+##############################################################################
+
+log "Creating Python virtual environment for Superset..."
+if [ ! -d "$SUPERSET_HOME/env" ]; then
+    python3.11 -m venv "$SUPERSET_HOME/env"
+fi
+
+log "Activating virtual environment and installing Apache Superset..."
+source "$SUPERSET_HOME/env/bin/activate"
+if ! pip install --upgrade pip setuptools wheel; then
+    log "FATAL: Failed to upgrade pip/setuptools/wheel in venv. Aborting."
+    exit 1
+fi
+if ! pip install "apache-superset[postgres]==4.1.0rc3"; then
+    log "FATAL: Failed to install Apache Superset in venv. Aborting."
+    exit 1
+fi
+deactivate
+
+##############################################################################
+# FILE MANAGEMENT: Creating application directories
+##############################################################################
+
+log "Creating application directories..."
+mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
+
+##############################################################################
+# CONFIGURATION DOWNLOADS
+##############################################################################
+# Clone the Git repository for text configuration files.
+log "Cloning text configuration files from Git repository: $TEXT_FILES_REPO"
+if [ -d "$TEXT_FILES_DIR" ]; then
+    rm -rf "$TEXT_FILES_DIR"
+fi
+git clone "$TEXT_FILES_REPO" "$TEXT_FILES_DIR"
+
+log "Copying text configuration files..."
+cp "$TEXT_FILES_DIR/our-logs.conf" /etc/logrotate.d/our-logs
+cp "$TEXT_FILES_DIR/backup_postgres.sh" /usr/local/bin/backup_postgres.sh
+cp "$TEXT_FILES_DIR/superset_config.py" "$SUPERSET_CONFIG_PATH"
+cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services.sh
+chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services.sh
+
+# Download blob files (binary artifacts) from S3/Minio.
+declare -A blob_files=(
+    ["metabase.jar"]="$METABASE_HOME/metabase.jar"
+    ["affine.tar.gz"]="$AFFINE_HOME/affine.tar.gz"
+)
+
+log "Downloading blob files from S3/Minio..."
+for file in "${!blob_files[@]}"; do
+    dest="${blob_files[$file]}"
+    url="${MINIO_BASE_URL}/${file}"
+    log "Downloading $file from $url"
+    if ! wget -q "$url" -O "$dest"; then
+        log "FATAL: Failed to download $file from $url. Aborting."
+        exit 1
+    fi
+done
+
+##############################################################################
+# AFFiNE SETUP
+##############################################################################
+
+log "Deploying AFFiNE..."
+if ! tar -xzf "$AFFINE_HOME/affine.tar.gz" -C "$AFFINE_HOME" --strip-components=1; then
+    log "FATAL: Failed to extract AFFiNE package. Aborting."
+    exit 1
+fi
+rm -f "$AFFINE_HOME/affine.tar.gz"
+if ! chown -R $SUDO_USER:$SUDO_USER "$AFFINE_HOME"; then
+    log "FATAL: Failed to set ownership for AFFiNE. Aborting."
+    exit 1
+fi
+find "$AFFINE_HOME" -type d -exec chmod 755 {} \;
+find "$AFFINE_HOME" -type f -exec chmod 644 {} \;
+
+##############################################################################
+# MAINTENANCE CONFIGURATION
+##############################################################################
+
+log "Configuring maintenance jobs..."
+if ! chmod +x /usr/local/bin/backup_postgres.sh; then
+    log "FATAL: Failed to make backup_postgres.sh executable. Aborting."
+    exit 1
+fi
+if ! chmod +x /usr/local/bin/services.sh; then
+    log "FATAL: Failed to make services.sh executable. Aborting."
+    exit 1
+fi
+mkdir -p /var/lib/logs /var/log/redis /mnt/pgdb_backups
+
+echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
+echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
+
+##############################################################################
+# FINALIZATION
+##############################################################################
+
+log "Provisioning complete!"
 
 ##############################################################################
 # FINALIZATION
