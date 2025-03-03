@@ -92,8 +92,12 @@ cd /tmp
 # PACKAGE INSTALLATION (non-PostgreSQL packages)
 ##############################################################################
 
+##############################################################################
+# PACKAGE INSTALLATION (non-PostgreSQL packages)
+##############################################################################
+
 log "Installing system packages..."
-if ! dnf -y install \
+if ! dnf -y install --disablerepo=epel \
     wget \
     git \
     curl \
