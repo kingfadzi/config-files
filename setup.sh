@@ -80,12 +80,15 @@ stop_postgresql() {
 ##############################################################################
 
 stop_redis() {
-    if pgrep redis-server >/dev/null; then
-        log "Stopping Redis..."
-        pkill redis-server || { log "WARNING: Failed to stop Redis. Attempting to kill forcefully..."; pkill -9 redis-server; }
-    else
-        log "Redis is not running."
+    log "Stopping Redis..."
+    pkill -f "redis-server"
+    sleep 1
+    if pgrep -f "redis-server" &>/dev/null; then
+        log "ERROR: Redis did not stop."
+        return 1
     fi
+    log "Redis stopped."
+    return 0
 }
 
 ##############################################################################
