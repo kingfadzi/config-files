@@ -154,7 +154,7 @@ init_postgres() {
     echo "host all all 0.0.0.0/0 md5" | sudo -u postgres tee -a "$POSTGRES_DATA_DIR/pg_hba.conf" >/dev/null
 
     log "Starting temporary PostgreSQL instance..."
-    if ! sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_DATA_DIR/postgres_init.log"; then
+    if ! sudo -u postgres bash -c "cd ${POSTGRES_DATA_DIR} && exec ${PGCTL_BIN} -D ${POSTGRES_DATA_DIR} start -l ${POSTGRES_LOG_DIR}/postgres.log"; then
         log "FATAL: Failed to start temporary PostgreSQL instance. Aborting."
         exit 1
     fi
