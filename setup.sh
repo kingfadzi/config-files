@@ -330,11 +330,26 @@ if ! sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
     exit 1
 fi
 
+# Ensure Redis log directory exists and has proper permissions
+sudo mkdir -p /var/log/redis
+sudo chown redis:redis /var/log/redis
+
 log "Starting Redis..."
-if ! redis-server "$REDIS_CONF_FILE" &>/dev/null & then
+if ! redis-server "$REDIS_CONF_FILE" &>/var/log/redis/redis.log & then
     log "FATAL: Could not start Redis service. Aborting."
+    log "Check Redis logs at /var/log/redis/redis.log for more details."
     exit 1
 fi
+
+# Verify Redis is running
+sleep 2  # Give Redis time to start
+if ! pgrep redis-server >/dev/null; then
+    log "FATAL: Redis failed to start. Aborting."
+    log "Check Redis logs at /var/log/redis/redis.log for more details."
+    exit 1
+fi
+
+log "Redis is running."
 
 ##############################################################################
 # FINALIZATION
