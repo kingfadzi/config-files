@@ -83,7 +83,7 @@ start_postgres() {
     fi
 
     log "Starting PostgreSQL..."
-    sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_LOG_DIR/postgres.log"
+    sudo -H -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_LOG_DIR/postgres.log"
     local started_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if psql_check; then
