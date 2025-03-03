@@ -160,56 +160,47 @@ init_postgres() {
     fi
 
     local init_ok=false
-    for i in $(seq 1 $PG_MAX_WAIT); do
-        if psql_check; then
-            log "Securing PostgreSQL user..."
-            sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+      for i in $(seq 1 $PG_MAX_WAIT); do
+          if psql_check; then
+              log "Securing PostgreSQL user..."
+              sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 
-            log "Ensuring affine user exists..."
-            if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'affine'" | grep -q 1; then
-                sudo -u postgres psql -c "CREATE USER affine WITH PASSWORD 'affine';"
-                log "Created user: affine"
-            else
-                log "User affine already exists"
-            fi
+              log "Ensuring affine user exists..."
+              if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'affine'" | grep -q 1; then
+                  sudo -u postgres psql -c "CREATE USER affine WITH PASSWORD 'affine';"
+                  log "Created user: affine"
+              else
+                  log "User affine already exists"
+              fi
 
-            log "Ensuring affine database exists..."
-            if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'affine'" | grep -q 1; then
-                sudo -u postgres psql -c "CREATE DATABASE affine WITH OWNER affine;"
-                log "Created database: affine"
-            else
-                log "Database affine already exists"
-            fi
+              log "Creating databases..."
+              for db in $PG_DATABASES; do
+                  if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
+                      if [ "$db" = "affine" ]; then
+                          sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER affine;"
+                      else
+                          sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
+                      fi
+                      log "Created database: $db"
+                  fi
+                  restore_backup "$db"
+              done
 
-            log "Creating additional databases..."
-            for db in $PG_DATABASES; do
-                if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
-                    if [ "$db" = "affine" ]; then
-                        sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER affine;"
-                    else
-                        sudo -u postgres psql -c "CREATE DATABASE $db WITH OWNER postgres;"
-                    fi
-                    log "Created database: $db"
-                fi
-                restore_backup "$db"
-            done
+              init_ok=true
+              break
+          fi
+          sleep 1
+      done
 
+      if [ "$init_ok" = false ]; then
+          log "FATAL: PostgreSQL initialization failed. Aborting."
+          sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop &>/dev/null
+          exit 1
+      fi
 
-            init_ok=true
-            break
-        fi
-        sleep 1
-    done
-
-    if [ "$init_ok" = false ]; then
-        log "FATAL: PostgreSQL initialization failed. Aborting."
-        sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop &>/dev/null
-        exit 1
-    fi
-
-    log "Stopping initialization instance..."
-    sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
-    sleep 2
+      log "Stopping initialization instance..."
+      sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
+      sleep 2
 }
 
 
