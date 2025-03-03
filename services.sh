@@ -15,7 +15,7 @@ fi
 USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 LOG_FILE="/var/log/services.log"
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
-POSTGRES_LOG_DIR="/var/lib/pgsql"
+POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
 PGCTL_BIN="/usr/bin/pg_ctl"
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
@@ -83,7 +83,7 @@ start_postgres() {
     fi
 
     log "Starting PostgreSQL..."
-    sudo -H -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start -l "$POSTGRES_LOG_DIR/postgres.log"
+    sudo -u postgres bash -c "cd ~ && $PGCTL_BIN -D '$POSTGRES_DATA_DIR' start -l '$POSTGRES_LOG_DIR/postgres.log'"
     local started_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if psql_check; then
@@ -108,7 +108,7 @@ stop_postgres() {
     fi
 
     log "Stopping PostgreSQL..."
-    sudo -H -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop
+    sudo -u postgres bash -c "cd ~ && $PGCTL_BIN -D '$POSTGRES_DATA_DIR' stop"
     local stopped_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if ! psql_check; then
