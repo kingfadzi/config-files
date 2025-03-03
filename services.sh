@@ -81,11 +81,11 @@ start_postgres() {
         log "PostgreSQL is already running."
         return 0
     fi
-    
+
     chown postgres:postgres $POSTGRES_LOG_DIR
 
     log "Starting PostgreSQL..."
-    sudo -u postgres bash -c "cd ~ && $PGCTL_BIN -D '$POSTGRES_DATA_DIR' start -l '$POSTGRES_LOG_DIR/postgres.log'"
+    sudo -u postgres bash -c "cd ${POSTGRES_DATA_DIR} && exec ${PGCTL_BIN} -D ${POSTGRES_DATA_DIR} start -l ${POSTGRES_LOG_DIR}/postgres.log"
     local started_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if psql_check; then
@@ -110,7 +110,7 @@ stop_postgres() {
     fi
 
     log "Stopping PostgreSQL..."
-    sudo -u postgres bash -c "cd ~ && $PGCTL_BIN -D '$POSTGRES_DATA_DIR' stop"
+    sudo -u postgres bash -c "cd ${POSTGRES_DATA_DIR} && exec ${PGCTL_BIN} -D ${POSTGRES_DATA_DIR} stop"
     local stopped_ok=false
     for i in $(seq 1 $PG_MAX_WAIT); do
         if ! psql_check; then
