@@ -64,8 +64,14 @@ log() {
 
 if [ "$REPAVE_INSTALLATION" = "true" ]; then
     echo "[INFO] Repave flag detected (default=true). Stopping services and removing old installation files..."
-    systemctl stop postgresql-13 || true
-    systemctl stop redis || true
+    # Stop PostgreSQL if running
+    if [ -f "$POSTGRES_DATA_DIR/postmaster.pid" ]; then
+        sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" stop || true
+    fi
+    # Stop Redis if running
+    if pgrep redis-server >/dev/null; then
+        pkill redis-server || true
+    fi
     rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
     rm -rf "/var/lib/pgsql/13/data"
 fi
@@ -266,17 +272,13 @@ init_postgres() {
 ##############################################################################
 
 log "Configuring PostgreSQL..."
-if ! systemctl enable postgresql-13; then
-    log "FATAL: Could not enable PostgreSQL service. Aborting."
-    exit 1
-fi
-
 if ! init_postgres; then
     log "FATAL: PostgreSQL initialization failed. Aborting."
     exit 1
 fi
 
-if ! systemctl start postgresql-13; then
+log "Starting PostgreSQL..."
+if ! sudo -u postgres "$PGCTL_BIN" -D "$POSTGRES_DATA_DIR" start; then
     log "FATAL: Could not start PostgreSQL service. Aborting."
     exit 1
 fi
@@ -301,11 +303,9 @@ if ! sed -i "s/^protected-mode yes/protected-mode no/" "$REDIS_CONF_FILE"; then
     log "FATAL: Failed to disable Redis protected mode. Aborting."
     exit 1
 fi
-if ! systemctl enable redis; then
-    log "FATAL: Could not enable Redis service. Aborting."
-    exit 1
-fi
-if ! systemctl start redis; then
+
+log "Starting Redis..."
+if ! redis-server "$REDIS_CONF_FILE" &>/dev/null & then
     log "FATAL: Could not start Redis service. Aborting."
     exit 1
 fi
