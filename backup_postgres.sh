@@ -4,7 +4,7 @@ trap 'echo "[ERROR] Script failed at line $LINENO" >&2' ERR
 
 BACKUP_DIR="${BACKUP_DIR:-./pgdb_backups}"
 PG_USER="${PG_USER:-postgres}"
-PG_HOST="${PG_HOST:-localhost}"
+PG_HOST="${PG_HOST:-192.168.1.188}"
 PG_PORT="${PG_PORT:-5432}"
 PG_DUMP="${PG_DUMP:-/usr/bin/pg_dump}"
 LOG_FILE="${LOG_FILE:-/tmp/pg_backup.log}"
