@@ -1,8 +1,11 @@
 #!/bin/bash
+if [ "$EUID" -ne 0 ]; then
+  echo "This script must be run as root (via sudo)" >&2
+  exit 1
+fi
 
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 DB_CONFIGS=("my-db:postgres" "analytics:analytics")
-
 export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export MINIO_BASE_URL="http://localhost:9000/blobs"
 export PGHOST="localhost"
