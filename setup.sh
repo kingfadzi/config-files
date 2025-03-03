@@ -75,6 +75,19 @@ stop_postgresql() {
 }
 
 ##############################################################################
+# FUNCTION TO STOP REDIS
+##############################################################################
+
+stop_redis() {
+    if pgrep redis-server >/dev/null; then
+        log "Stopping Redis..."
+        pkill redis-server || { log "WARNING: Failed to stop Redis. Attempting to kill forcefully..."; pkill -9 redis-server; }
+    else
+        log "Redis is not running."
+    fi
+}
+
+##############################################################################
 # FUNCTION TO ENSURE PERMISSIONS
 ##############################################################################
 
@@ -312,19 +325,6 @@ if ! ss -tnlp | grep -q '0.0.0.0:5432'; then
     exit 1
 fi
 log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
-
-##############################################################################
-# FUNCTION TO STOP REDIS
-##############################################################################
-
-stop_redis() {
-    if pgrep redis-server >/dev/null; then
-        log "Stopping Redis..."
-        pkill redis-server || { log "WARNING: Failed to stop Redis. Attempting to kill forcefully..."; pkill -9 redis-server; }
-    else
-        log "Redis is not running."
-    fi
-}
 
 ##############################################################################
 # REDIS CONFIGURATION
