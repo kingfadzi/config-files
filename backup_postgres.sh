@@ -17,7 +17,6 @@ mkdir -p "$(dirname "$LOG_FILE")" || echo "[WARNING] Failed to create log direct
 
 touch "$LOG_FILE" || echo "[WARNING] Failed to create log file: $LOG_FILE" | tee -a "$LOG_FILE" >&2
 
-# Function to log messages to both stdout and the log file
 log() {
   echo "$1" | tee -a "$LOG_FILE"
 }
