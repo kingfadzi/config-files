@@ -339,6 +339,23 @@ log "PostgreSQL is confirmed to be listening on 0.0.0.0:5432."
 # REDIS CONFIGURATION
 ##############################################################################
 
+start_redis() {
+    if pgrep -f "redis-server" &>/dev/null; then
+        log "Redis is already running."
+        return 0
+    fi
+
+    log "Starting Redis..."
+    redis-server "$REDIS_CONF_FILE" &
+    sleep 1
+    if ! pgrep -f "redis-server" &>/dev/null; then
+        log "ERROR: Redis failed to start."
+        return 1
+    fi
+    log "Redis started."
+    return 0
+}
+
 log "Setting up Redis..."
 stop_redis  # Stop Redis if running
 
@@ -361,7 +378,7 @@ sudo mkdir -p /var/log/redis
 sudo chown redis:redis /var/log/redis
 
 log "Starting Redis..."
-if ! redis-server "$REDIS_CONF_FILE" &>/var/log/redis/redis.log & then
+if ! start_redis; then
     log "FATAL: Could not start Redis service. Aborting."
     log "Check Redis logs at /var/log/redis/redis.log for more details."
     exit 1
