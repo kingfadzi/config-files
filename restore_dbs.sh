@@ -1,11 +1,15 @@
 #!/bin/bash
+
+POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 DB_CONFIGS=("my-db:postgres" "analytics:analytics")
+
 export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export MINIO_BASE_URL="http://localhost:9000/blobs"
 export PGHOST="localhost"
 export PGPORT="5432"
 export PGUSER="postgres"
 export PGDATABASE="postgres"
+cd "${POSTGRES_DATA_DIR}" || { echo "Failed to cd to ${POSTGRES_DATA_DIR}"; exit 1; }
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
