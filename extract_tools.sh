@@ -1,33 +1,35 @@
 #!/bin/bash
 set -e
 
-MINIO_URL="http://localhost:9000"
-BUCKET="blobs"
+# Hardcoded configuration
+MINIO_URL="http://localhost:9000/blobs"
+CONTAINER_TAR_PATH="/tmp/tools.tar.gz"
+DEST_DIR="/mnt/archives"
 
+# Check for container name parameter
 if [ -z "$1" ]; then
-    echo "Error: Container name must be provided as first argument"
+    echo "Error: Container name/ID must be provided"
     echo "Usage: $0 [CONTAINER_NAME]"
     exit 1
 fi
 
 CONTAINER_NAME=$1
-DEST_DIR="/mnt/archives"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-ARCHIVE_NAME="tools_${TIMESTAMP}.tar.gz"
 
-echo "Creating archive ${ARCHIVE_NAME} from container ${CONTAINER_NAME}..."
-docker run -v $(pwd):/backup --rm -it ${CONTAINER_NAME} \
-    tar -czvf /backup/${ARCHIVE_NAME} \
-        /home/prefect/ \
-        /usr/local/bin/{xeol,syft,trivy,kantra,grype,go-enry,cloc}
+# Create archive inside running container
+echo "Creating tarball in container ${CONTAINER_NAME}..."
+docker exec "${CONTAINER_NAME}" tar -czvf "${CONTAINER_TAR_PATH}" \
+    /home/prefect/ \
+    /usr/local/bin/{xeol,syft,trivy,kantra,grype,go-enry,cloc}
 
-echo "Staging in ${DEST_DIR}..."
+# Copy archive to host
+echo "Extracting tarball to host..."
 mkdir -p "${DEST_DIR}"
-mv "${ARCHIVE_NAME}" "${DEST_DIR}"
+docker cp "${CONTAINER_NAME}:${CONTAINER_TAR_PATH}" "${DEST_DIR}/tools.tar.gz"
 
-echo "Uploading to ${MINIO_URL}..."
-curl -X PUT --upload-file "${DEST_DIR}/${ARCHIVE_NAME}" \
-    "${MINIO_URL}/${BUCKET}/${ARCHIVE_NAME}"
+# Upload to MinIO
+echo "Uploading to MinIO..."
+curl -X PUT --upload-file "${DEST_DIR}/tools.tar.gz" \
+    "${MINIO_URL}/tools.tar.gz"
 
-echo -e "\nUpload complete! Public URL:"
-echo "${MINIO_URL}/${BUCKET}/${ARCHIVE_NAME}"
+echo -e "\nUpload successful! Public URL:"
+echo "${MINIO_URL}/tools.tar.gz"
