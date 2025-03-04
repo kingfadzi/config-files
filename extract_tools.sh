@@ -15,11 +15,22 @@ fi
 
 CONTAINER_ID=$1
 
-# Create archive with specific home/prefect subdirectories
+# Create archive with explicit path listing
 echo "Packaging files in container ${CONTAINER_ID}..."
 docker exec "${CONTAINER_ID}" tar -czvf "${CONTAINER_TAR_PATH}" \
-    /home/prefect/{.cache,.grype,.kantra,.semgrep,.syft,.trivy} \
-    /usr/local/bin/{xeol,syft,trivy,kantra,grype,go-enry,cloc}
+    /home/prefect/.cache \
+    /home/prefect/.grype \
+    /home/prefect/.kantra \
+    /home/prefect/.semgrep \
+    /home/prefect/.syft \
+    /home/prefect/.trivy \
+    /usr/local/bin/xeol \
+    /usr/local/bin/syft \
+    /usr/local/bin/trivy \
+    /usr/local/bin/kantra \
+    /usr/local/bin/grype \
+    /usr/local/bin/go-enry \
+    /usr/local/bin/cloc
 
 # Copy to host
 echo "Extracting to ${DEST_DIR}..."
