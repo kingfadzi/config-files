@@ -15,10 +15,10 @@ fi
 
 CONTAINER_ID=$1
 
-# Create archive inside container
+# Create archive with specific home/prefect subdirectories
 echo "Packaging files in container ${CONTAINER_ID}..."
 docker exec "${CONTAINER_ID}" tar -czvf "${CONTAINER_TAR_PATH}" \
-    /home/prefect/ \
+    /home/prefect/{.cache,.grype,.kantra,.semgrep,.syft,.trivy} \
     /usr/local/bin/{xeol,syft,trivy,kantra,grype,go-enry,cloc}
 
 # Copy to host
