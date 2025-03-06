@@ -41,6 +41,7 @@ export MB_DB_PORT="5432"
 export MB_DB_USER="postgres"
 export MB_DB_PASS="postgres"
 export MB_DB_HOST="localhost"
+export MB_JETTY_HOST="0.0.0.0"
 
 ##############################################################################
 # LOGGING & HELPERS

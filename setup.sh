@@ -253,6 +253,8 @@ if ! dnf -y install --disablerepo=epel \
     iproute \
     procps-ng \
     redis \
+    socat \
+    prefect \
     python3.11 \
     python3.11-devel \
     nodejs; then
