@@ -255,6 +255,7 @@ if ! dnf -y install --disablerepo=epel \
     redis \
     socat \
     prefect \
+    hostname \
     python3.11 \
     python3.11-devel \
     nodejs; then

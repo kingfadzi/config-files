@@ -32,7 +32,7 @@ fi
 for db in $databases; do
   if [[ "$db" =~ ^[a-zA-Z0-9_\-]+$ ]]; then
     log "[$(date)] Backing up database: $db"
-    "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump" 2>&1 || {
+    "$PG_DUMP" -U "$PG_USER" -h "$PG_HOST" -p "$PG_PORT" -Fc "$db" > "$BACKUP_DIR/$db.dump" 2> "$BACKUP_DIR/$db.dump.err" || {
       log "[ERROR] Failed to back up database: $db. Skipping to the next database."
       continue
     }
@@ -47,5 +47,6 @@ for db in $databases; do
     log "[WARNING] Skipping invalid database name: $db"
   fi
 done
+
 
 log "[$(date)] PostgreSQL backup process completed."
