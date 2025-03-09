@@ -13,7 +13,7 @@ export PGUSER="${PGUSER:-postgres}"
 export PGDATABASE="${PGDATABASE:-postgres}"
 
 if [ -z "${DB_CONFIGS+x}" ]; then
-    DB_CONFIGS=("gitlab-usage:postgres" "prefect:postgres")
+    DB_CONFIGS=("my-db:postgres" "analytics:analytics")
 else
     IFS=',' read -ra DB_CONFIGS <<< "$DB_CONFIGS"
 fi
@@ -29,9 +29,12 @@ download_backup() {
     local backup_file="${db}.dump"
     local backup_url="${MINIO_BASE_URL}/${backup_file}"
     local backup_path="/tmp/${backup_file}"
-    log "Downloading ${db} backup from Minio: ${backup_url}"
-    if ! wget -q "${backup_url}" -O "$backup_path"; then
-        log "ERROR: No backup found for ${db} at URL: ${backup_url}. Skipping ${db}."
+    log "Attempting to download ${db} backup from URL: ${backup_url}"
+    # Capture wget error output
+    local wget_error
+    wget_error=$(wget -q "${backup_url}" -O "$backup_path" 2>&1)
+    if [ $? -ne 0 ]; then
+        log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_error}. Skipping ${db}."
         return 1
     fi
     echo "$backup_path"
@@ -40,7 +43,7 @@ download_backup() {
 for config in "${DB_CONFIGS[@]}"; do
     IFS=":" read -r db owner <<< "$config"
 
-    # Download the backup; if download fails, skip this database.
+    # Download the backup; if download fails, log and skip this database.
     backup_path=$(download_backup "$db")
     if [ $? -ne 0 ] || [ -z "$backup_path" ]; then
          log "Skipping ${db} due to backup download failure."
@@ -57,13 +60,13 @@ for config in "${DB_CONFIGS[@]}"; do
     fi
 
     if ! sudo -u postgres psql -c "DROP DATABASE IF EXISTS \"$db\";"; then
-        log "ERROR: Failed to drop ${db}. Skipping ${db}."
+        log "ERROR: Failed to drop database ${db}. Skipping ${db}."
         rm -f "$backup_path"
         continue
     fi
 
     if ! sudo -u postgres psql -c "CREATE DATABASE \"$db\" WITH OWNER $owner;"; then
-        log "ERROR: Failed to create ${db} with owner $owner. Skipping ${db}."
+        log "ERROR: Failed to create database ${db} with owner ${owner}. Skipping ${db}."
         rm -f "$backup_path"
         continue
     fi
@@ -71,7 +74,7 @@ for config in "${DB_CONFIGS[@]}"; do
 
     log "Restoring ${db} database..."
     if ! sudo -u postgres "$PG_RESTORE_BIN" -d "$db" "$backup_path"; then
-        log "ERROR: Failed to restore ${db} database. Skipping ${db}."
+        log "ERROR: Failed to restore ${db} from backup file ${backup_path}. Skipping ${db}."
         rm -f "$backup_path"
         continue
     fi
