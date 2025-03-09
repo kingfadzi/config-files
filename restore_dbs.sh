@@ -1,4 +1,8 @@
 #!/bin/bash
+set -o pipefail
+# Uncomment the next line for shell debugging:
+# set -x
+
 if [ "$EUID" -ne 0 ]; then
   echo "This script must be run as root (via sudo)" >&2
   exit 1
@@ -21,7 +25,8 @@ fi
 cd "${POSTGRES_DATA_DIR}" || { echo "Failed to cd to ${POSTGRES_DATA_DIR}"; exit 1; }
 
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    # Immediately flush output by redirecting to stderr (which is usually unbuffered)
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
 }
 
 download_backup() {
@@ -29,28 +34,29 @@ download_backup() {
     local backup_file="${db}.dump"
     local backup_url="${MINIO_BASE_URL}/${backup_file}"
     local backup_path="/tmp/${backup_file}"
+    log "DEBUG: Entered download_backup for ${db}"  # Debug marker
     log "Attempting to download ${db} backup from URL: ${backup_url}"
-    # Use --no-verbose to capture error output but not the full progress bar.
     local wget_output
+    # Remove the quiet flag so we capture all output; use --no-verbose to avoid progress bar noise.
     wget_output=$(wget --no-verbose "${backup_url}" -O "$backup_path" 2>&1)
     local ret=$?
     if [ $ret -ne 0 ]; then
-        log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_output}. Skipping ${db}."
+        log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_output}"
         return 1
     fi
+    log "Successfully downloaded backup for ${db} to ${backup_path}"
     echo "$backup_path"
 }
 
 for config in "${DB_CONFIGS[@]}"; do
     IFS=":" read -r db owner <<< "$config"
+    log "Processing database: ${db} with owner: ${owner}"
 
-    # Download the backup first; if it fails, log the detailed error and skip this database.
     backup_path=$(download_backup "$db")
     if [ $? -ne 0 ] || [ -z "$backup_path" ]; then
          log "Skipping ${db} due to backup download failure."
          continue
     fi
-    log "Successfully downloaded backup for ${db} to ${backup_path}"
 
     log "Replacing database: $db"
 
