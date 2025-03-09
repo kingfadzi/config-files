@@ -11,7 +11,7 @@ export PGDATABASE=postgres
 export POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-/var/lib/pgsql/data}"
 export PG_RESTORE_BIN="${PG_RESTORE_BIN:-/usr/bin/pg_restore}"
 export MINIO_BASE_URL="${MINIO_BASE_URL:-http://localhost:9000/blobs}"
-export DB_CONFIGS="${DB_CONFIGS:-my-db:postgres,analytics:analytics}"
+export DB_CONFIGS="${DB_CONFIGS:-prefect:postgres,gitlab-usage:postgres}"
 
 # Security Check
 if [[ $EUID -ne 0 ]]; then
