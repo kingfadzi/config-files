@@ -5,8 +5,8 @@ shopt -s inherit_errexit
 # Environment Configuration
 export POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-/var/lib/pgsql/data}"
 export PG_RESTORE_BIN="${PG_RESTORE_BIN:-/usr/bin/pg_restore}"
-export MINIO_BASE_URL="${MINIO_BASE_URL:-http://localhost:9000/blobs}"
-export DB_CONFIGS="${DB_CONFIGS:-my-db:postgres,analytics:analytics}"
+export MINIO_BASE_URL="${MINIO_BASE_URL:-http://192.168.1.194:9000/blobs}"
+export DB_CONFIGS="${DB_CONFIGS:-gitlab-usage:postgres,prefect:prefect}"
 export PGHOST="${PGHOST:-localhost}"
 export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
