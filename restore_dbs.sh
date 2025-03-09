@@ -13,7 +13,7 @@ export PGUSER="${PGUSER:-postgres}"
 export PGDATABASE="${PGDATABASE:-postgres}"
 
 if [ -z "${DB_CONFIGS+x}" ]; then
-    DB_CONFIGS=("my-db:postgres" "analytics:analytics")
+    DB_CONFIGS=("gitlab-usage:postgres" "prefect:postgres")
 else
     IFS=',' read -ra DB_CONFIGS <<< "$DB_CONFIGS"
 fi
