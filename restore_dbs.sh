@@ -1,6 +1,6 @@
 #!/bin/bash
 set -o pipefail
-# Uncomment the next line for shell debugging:
+# Uncomment below to enable shell debugging
 # set -x
 
 if [ "$EUID" -ne 0 ]; then
@@ -25,7 +25,7 @@ fi
 cd "${POSTGRES_DATA_DIR}" || { echo "Failed to cd to ${POSTGRES_DATA_DIR}"; exit 1; }
 
 log() {
-    # Immediately flush output by redirecting to stderr (which is usually unbuffered)
+    # Write logs to stderr for immediate output
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
 }
 
@@ -34,17 +34,33 @@ download_backup() {
     local backup_file="${db}.dump"
     local backup_url="${MINIO_BASE_URL}/${backup_file}"
     local backup_path="/tmp/${backup_file}"
-    log "DEBUG: Entered download_backup for ${db}"  # Debug marker
+    log "DEBUG: Entered download_backup for ${db}"
     log "Attempting to download ${db} backup from URL: ${backup_url}"
+
     local wget_output
-    # Remove the quiet flag so we capture all output; use --no-verbose to avoid progress bar noise.
     wget_output=$(wget --no-verbose "${backup_url}" -O "$backup_path" 2>&1)
     local ret=$?
     if [ $ret -ne 0 ]; then
         log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_output}"
         return 1
     fi
-    log "Successfully downloaded backup for ${db} to ${backup_path}"
+
+    # Check if the file is non-empty
+    if [ ! -s "$backup_path" ]; then
+        log "ERROR: Downloaded backup for ${db} from URL: ${backup_url} is empty. Skipping ${db}."
+        return 1
+    fi
+
+    # Verify file header: a custom-format dump should start with "PGDMP"
+    local header
+    header=$(head -c 5 "$backup_path")
+    if [ "$header" != "PGDMP" ]; then
+        log "ERROR: Downloaded file for ${db} from URL: ${backup_url} does not have a valid PostgreSQL dump header (found '$header'). Skipping ${db}."
+        rm -f "$backup_path"
+        return 1
+    fi
+
+    log "Successfully downloaded valid backup for ${db} to ${backup_path}"
     echo "$backup_path"
 }
 
