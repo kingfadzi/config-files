@@ -38,6 +38,7 @@ export PGCTL_BIN="/usr/bin/pg_ctl"
 export PG_RESTORE_BIN="/usr/bin/pg_restore"
 export PG_MAX_WAIT=30
 export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
+export POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
 export LD_LIBRARY_PATH="/usr/pgsql-13/lib:${LD_LIBRARY_PATH:-}"
 
 ##############################################################################
@@ -94,6 +95,14 @@ ensure_permissions() {
         exit 1
     fi
     chmod 700 "$POSTGRES_DATA_DIR"
+
+    mkdir -p "$POSTGRES_LOG_DIR"
+    if ! chown postgres:postgres "$POSTGRES_LOG_DIR"; then
+        log "FATAL: Failed to set ownership on $POSTGRES_LOG_DIR. Aborting."
+        exit 1
+    fi
+    chmod 700 "$POSTGRES_LOG_DIR"
+
 }
 
 ##############################################################################
