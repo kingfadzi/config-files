@@ -254,7 +254,6 @@ if ! dnf -y install --disablerepo=epel \
     procps-ng \
     redis \
     socat \
-    prefect \
     hostname \
     python3.11 \
     python3.11-devel \
