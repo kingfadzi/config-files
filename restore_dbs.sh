@@ -1,106 +1,148 @@
-#!/bin/bash
-set -o pipefail
-# Uncomment below to enable shell debugging
-# set -x
+#!/usr/bin/env bash
+set -eo pipefail
+shopt -s inherit_errexit
 
-if [ "$EUID" -ne 0 ]; then
-  echo "This script must be run as root (via sudo)" >&2
-  exit 1
-fi
-
+# Environment Configuration
 export POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-/var/lib/pgsql/data}"
 export PG_RESTORE_BIN="${PG_RESTORE_BIN:-/usr/bin/pg_restore}"
 export MINIO_BASE_URL="${MINIO_BASE_URL:-http://localhost:9000/blobs}"
+export DB_CONFIGS="${DB_CONFIGS:-my-db:postgres,analytics:analytics}"
 export PGHOST="${PGHOST:-localhost}"
 export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
-export PGDATABASE="${PGDATABASE:-postgres}"
+export MAX_RETRIES=2
+export CURL_TIMEOUT=30
 
-if [ -z "${DB_CONFIGS+x}" ]; then
-    DB_CONFIGS=("my-db:postgres" "analytics:analytics")
-else
-    IFS=',' read -ra DB_CONFIGS <<< "$DB_CONFIGS"
+# Security Check
+if [[ $EUID -ne 0 ]]; then
+  echo "🔒 This script requires root privileges" >&2
+  exit 1
 fi
 
-cd "${POSTGRES_DATA_DIR}" || { echo "Failed to cd to ${POSTGRES_DATA_DIR}"; exit 1; }
-
+# Initialize logging
+exec 3>&2
 log() {
-    # Write logs to stderr for immediate output
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+  local level=$1
+  shift
+  printf "%(%Y-%m-%d %H:%M:%S)T - %-8s - %s\n" -1 "$level" "$*" >&3
 }
 
+# Cleanup temporary files
+cleanup() {
+  local status=$?
+  trap - EXIT ERR
+  log "INFO" "Starting cleanup process"
+
+  if [[ -n "${backup_path:-}" && -f "$backup_path" ]]; then
+    rm -f "$backup_path" || log "WARNING" "Failed to remove ${backup_path}"
+  fi
+
+  exit $status
+}
+trap cleanup EXIT ERR
+
+# Enhanced download function with retries
 download_backup() {
-    local db=$1
-    local backup_file="${db}.dump"
-    local backup_url="${MINIO_BASE_URL}/${backup_file}"
-    local backup_path="/tmp/${backup_file}"
-    log "DEBUG: Entered download_backup for ${db}"
-    log "Attempting to download ${db} backup from URL: ${backup_url}"
+  local db=$1
+  local backup_file="${db}.dump"
+  local backup_url="${MINIO_BASE_URL}/${backup_file}"
+  local backup_path retry=0
 
-    local wget_output
-    wget_output=$(wget --no-verbose "${backup_url}" -O "$backup_path" 2>&1)
-    local ret=$?
-    if [ $ret -ne 0 ]; then
-        log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_output}"
+  backup_path=$(mktemp "/tmp/${db}-XXXXXX.dump")
+  log "INFO" "Downloading ${db} backup to ${backup_path}"
+
+  while (( retry <= MAX_RETRIES )); do
+    local http_code curl_output
+    curl_output=$(curl -fSL \
+      --write-out '%{http_code}' \
+      --max-time "$CURL_TIMEOUT" \
+      -o "$backup_path" \
+      "$backup_url" 2>&1) || true
+
+    http_code="${curl_output##*$'\n'}"
+    curl_message="${curl_output%$'\n'*}"
+
+    if [[ $http_code -eq 200 ]]; then
+      # Validate backup integrity
+      if ! head -c5 "$backup_path" | grep -q "PGDMP"; then
+        log "ERROR" "Invalid backup header in ${backup_file}"
         return 1
+      fi
+
+      log "DEBUG" "Download validation passed for ${db}"
+      echo "$backup_path"
+      return 0
     fi
 
-    # Check if the file is non-empty
-    if [ ! -s "$backup_path" ]; then
-        log "ERROR: Downloaded backup for ${db} from URL: ${backup_url} is empty. Skipping ${db}."
-        return 1
-    fi
+    log "WARNING" "Download attempt $((retry+1)) failed (HTTP ${http_code}): ${curl_message}"
+    ((retry++)) || true
+    sleep $((retry * 2))
+  done
 
-    # Verify file header: a custom-format dump should start with "PGDMP"
-    local header
-    header=$(head -c 5 "$backup_path")
-    if [ "$header" != "PGDMP" ]; then
-        log "ERROR: Downloaded file for ${db} from URL: ${backup_url} does not have a valid PostgreSQL dump header (found '$header'). Skipping ${db}."
-        rm -f "$backup_path"
-        return 1
-    fi
-
-    log "Successfully downloaded valid backup for ${db} to ${backup_path}"
-    echo "$backup_path"
+  log "ERROR" "Max download retries (${MAX_RETRIES}) exceeded for ${db}"
+  return 1
 }
 
-for config in "${DB_CONFIGS[@]}"; do
-    IFS=":" read -r db owner <<< "$config"
-    log "Processing database: ${db} with owner: ${owner}"
+# Database Management Functions
+terminate_connections() {
+  local db=$1
+  log "INFO" "Terminating active connections to ${db}"
 
-    backup_path=$(download_backup "$db")
-    if [ $? -ne 0 ] || [ -z "$backup_path" ]; then
-         log "Skipping ${db} due to backup download failure."
-         continue
-    fi
+  if ! sudo -u postgres psql -v ON_ERROR_STOP=1 <<<EOF
+    SELECT pg_terminate_backend(pid)
+    FROM pg_stat_activity
+    WHERE datname = '${db}' AND pid <> pg_backend_pid();
+EOF
+  then
+    log "ERROR" "Connection termination failed for ${db}"
+    return 1
+  fi
+}
 
-    log "Replacing database: $db"
+recreate_database() {
+  local db=$1 owner=$2
+  log "INFO" "Recreating database ${db} with owner ${owner}"
 
-    if ! sudo -u postgres psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid();"; then
-        log "ERROR: Failed to terminate connections for ${db}. Skipping ${db}."
-        rm -f "$backup_path"
-        continue
-    fi
+  sudo -u postgres psql -v ON_ERROR_STOP=1 <<-EOSQL
+    DROP DATABASE IF EXISTS "${db}";
+    CREATE DATABASE "${db}" WITH OWNER ${owner};
+EOSQL
+}
 
-    if ! sudo -u postgres psql -c "DROP DATABASE IF EXISTS \"$db\";"; then
-        log "ERROR: Failed to drop database ${db}. Skipping ${db}."
-        rm -f "$backup_path"
-        continue
-    fi
+# Main Execution Flow
+cd "${POSTGRES_DATA_DIR}" || {
+  log "ERROR" "Failed to access ${POSTGRES_DATA_DIR}"
+  exit 1
+}
 
-    if ! sudo -u postgres psql -c "CREATE DATABASE \"$db\" WITH OWNER $owner;"; then
-        log "ERROR: Failed to create database ${db} with owner ${owner}. Skipping ${db}."
-        rm -f "$backup_path"
-        continue
-    fi
-    log "Created database: $db with owner: $owner"
+IFS=',' read -ra databases <<< "${DB_CONFIGS}"
+for config in "${databases[@]}"; do
+  IFS=':' read -r db owner <<< "$config"
+  backup_path=""
 
-    log "Restoring ${db} database..."
-    if ! sudo -u postgres "$PG_RESTORE_BIN" -d "$db" "$backup_path"; then
-        log "ERROR: Failed to restore ${db} from backup file ${backup_path}. Skipping ${db}."
-        rm -f "$backup_path"
-        continue
-    fi
-    log "Successfully restored ${db} database."
-    rm -f "$backup_path"
+  log "INFO" "Processing database: ${db} (owner: ${owner})"
+
+  if ! backup_path=$(download_backup "$db"); then
+    log "ERROR" "Backup acquisition failed for ${db}"
+    continue
+  fi
+
+  if ! terminate_connections "$db"; then
+    continue
+  fi
+
+  if ! recreate_database "$db" "$owner"; then
+    log "ERROR" "Database recreation failed for ${db}"
+    continue
+  fi
+
+  log "INFO" "Restoring ${db} from ${backup_path}"
+  if ! sudo -u postgres "$PG_RESTORE_BIN" -d "$db" "$backup_path"; then
+    log "ERROR" "Restoration failed for ${db}"
+    continue
+  fi
+
+  log "SUCCESS" "Completed restoration of ${db}"
 done
+
+log "INFO" "All database operations completed"
