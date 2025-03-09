@@ -88,16 +88,17 @@ terminate_connections() {
   local db=$1
   log "INFO" "Terminating active connections to ${db}"
 
-  if ! sudo -u postgres psql -v ON_ERROR_STOP=1 <<<EOF
-    SELECT pg_terminate_backend(pid)
-    FROM pg_stat_activity
-    WHERE datname = '${db}' AND pid <> pg_backend_pid();
+  if ! sudo -u postgres psql -v ON_ERROR_STOP=1 <<EOF
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE datname = '${db}' AND pid <> pg_backend_pid();
 EOF
   then
     log "ERROR" "Connection termination failed for ${db}"
     return 1
   fi
 }
+
 
 recreate_database() {
   local db=$1 owner=$2
