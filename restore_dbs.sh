@@ -30,11 +30,12 @@ download_backup() {
     local backup_url="${MINIO_BASE_URL}/${backup_file}"
     local backup_path="/tmp/${backup_file}"
     log "Attempting to download ${db} backup from URL: ${backup_url}"
-    # Capture wget error output
-    local wget_error
-    wget_error=$(wget -q "${backup_url}" -O "$backup_path" 2>&1)
-    if [ $? -ne 0 ]; then
-        log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_error}. Skipping ${db}."
+    # Use --no-verbose to capture error output but not the full progress bar.
+    local wget_output
+    wget_output=$(wget --no-verbose "${backup_url}" -O "$backup_path" 2>&1)
+    local ret=$?
+    if [ $ret -ne 0 ]; then
+        log "ERROR: Failed to download backup for ${db} from URL: ${backup_url}. wget error: ${wget_output}. Skipping ${db}."
         return 1
     fi
     echo "$backup_path"
@@ -43,7 +44,7 @@ download_backup() {
 for config in "${DB_CONFIGS[@]}"; do
     IFS=":" read -r db owner <<< "$config"
 
-    # Download the backup; if download fails, log and skip this database.
+    # Download the backup first; if it fails, log the detailed error and skip this database.
     backup_path=$(download_backup "$db")
     if [ $? -ne 0 ] || [ -z "$backup_path" ]; then
          log "Skipping ${db} due to backup download failure."
