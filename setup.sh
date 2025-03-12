@@ -533,5 +533,5 @@ fi
 
 chown -R "$SUDO_USER":"$SUDO_USER" "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME" "$USER_LOG_DIR"
 
-log "Provisioning complete!"
+log "Provisioning complete for $SUDO_USER!"
 
