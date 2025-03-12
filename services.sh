@@ -295,20 +295,25 @@ init_superset() {
 }
 
 start_superset() {
-    if ! psql_check; then
-        log "ERROR: Postgres is not running; cannot start Superset."
-        return 1
+    if [ "$DB_HOST" = "localhost" ]; then
+        if ! psql_check; then
+            log "ERROR: Postgres is not running; cannot start Superset."
+            return 1
+        fi
+        if ! redis_check; then
+            log "ERROR: Redis is not running; cannot start Superset."
+            return 1
+        fi
     fi
-    if ! redis_check; then
-        log "ERROR: Redis is not running; cannot start Superset."
-        return 1
-    fi
+
     if [ ! -f "$SUPERSET_HOME/.superset_init_done" ]; then
         log "Superset not initialized. Initializing now..."
         init_superset || { log "FATAL: Superset initialization failed."; return 1; }
     fi
+
     ensure_dir "$SUPERSET_HOME"
     ensure_dir "$SUPERSET_LOG_DIR"
+
     if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
         log "Superset is already running."
         return 0
@@ -318,12 +323,14 @@ start_superset() {
     export SUPERSET_HOME="$SUPERSET_HOME"
     export FLASK_APP=superset
     export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
+
     log "Starting Superset..."
     log " Host: $DB_HOST"
     log " Port: $DB_PORT"
 
     nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
       > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
+
     for i in {1..60}; do
         if ss -tnlp | grep ":$SUPERSET_PORT" &>/dev/null; then
             log "Superset started."
@@ -331,9 +338,11 @@ start_superset() {
         fi
         sleep 1
     done
+
     log "ERROR: Superset failed to start after 60 seconds."
     return 1
 }
+
 
 stop_superset() {
     log "Stopping Superset..."
