@@ -5,7 +5,8 @@
 ##############################################################################
 
 USER_HOME=$HOME
-LOG_FILE="/var/log/services.log"
+USER_LOG_DIR=$USER_HOME/logs
+LOG_FILE="$USER_LOG_DIR/services.log"
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
 PGCTL_BIN="/usr/bin/pg_ctl"

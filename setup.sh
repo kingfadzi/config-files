@@ -40,6 +40,8 @@ export PG_MAX_WAIT=30
 #export PG_DATABASES=${PG_DATABASES:-"superset metabase affine"}
 export PG_DATABASES=${PG_DATABASES:-""}
 export POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
+export USER_LOG_DIR="$USER_HOME/logs"
+
 export LD_LIBRARY_PATH="/usr/pgsql-13/lib:${LD_LIBRARY_PATH:-}"
 
 ##############################################################################
@@ -432,8 +434,8 @@ deactivate
 ##############################################################################
 
 log "Creating application directories..."
-mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
-chown -R "$SUDO_USER":"$SUDO_USER" "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
+mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME" "$USER_LOG_DIR"
+chown -R "$SUDO_USER":"$SUDO_USER" "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME" "$USER_LOG_DIR"
 
 ##############################################################################
 # CONFIGURATION DOWNLOADS
