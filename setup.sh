@@ -222,7 +222,7 @@ if [ "$REPAVE_INSTALLATION" = "true" ]; then
     echo "[INFO] Repave flag detected (default=true). Stopping services and removing old installation files..."
     stop_postgresql
     stop_redis
-    rm -rf "$USER_HOME/tools/superset" "$USER_HOME/tools/metabase" "$USER_HOME/tools/affinity-main"
+    rm -rf "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
     rm -rf "$POSTGRES_DATA_DIR"
 fi
 
