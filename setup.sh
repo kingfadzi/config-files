@@ -493,7 +493,7 @@ if ! chmod +x /usr/local/bin/backup_postgres.sh; then
     log "FATAL: Failed to make backup_postgres.sh executable. Aborting."
     exit 1
 fi
-if ! chmod +x /usr/local/bin/services.sh; then
+if ! chmod +x /usr/local/bin/services; then
     log "FATAL: Failed to make services.sh executable. Aborting."
     exit 1
 fi
