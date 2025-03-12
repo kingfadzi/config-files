@@ -433,6 +433,7 @@ deactivate
 
 log "Creating application directories..."
 mkdir -p "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
+chown -R "$SUDO_USER":"$SUDO_USER" "$SUPERSET_HOME" "$METABASE_HOME" "$AFFINE_HOME"
 
 ##############################################################################
 # CONFIGURATION DOWNLOADS
