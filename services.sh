@@ -1,14 +1,6 @@
 #!/bin/bash
 
 ##############################################################################
-# SUDO CHECK
-##############################################################################
-if [ -z "${SUDO_USER:-}" ]; then
-    echo "[ERROR] This script must be run using sudo." >&2
-    exit 1
-fi
-
-##############################################################################
 # CONFIG
 ##############################################################################
 
@@ -72,6 +64,12 @@ redis_check() {
 ##############################################################################
 
 start_postgres() {
+
+    if [ -z "${SUDO_USER:-}" ]; then
+        echo "[ERROR] This script must be run using sudo." >&2
+        exit 1
+    fi
+
     ensure_dir "$POSTGRES_DATA_DIR"
     ensure_dir "$POSTGRES_LOG_DIR"
     ensure_dir "$POSTGRES_LOCK_FILE_DIR"
@@ -137,6 +135,13 @@ stop_postgres() {
 ##############################################################################
 
 start_redis() {
+
+    if [ -z "${SUDO_USER:-}" ]; then
+        echo "[ERROR] This script must be run using sudo." >&2
+        exit 1
+    fi
+
+
     if pgrep -f "redis-server" &>/dev/null; then
         log "Redis is already running."
         return 0
