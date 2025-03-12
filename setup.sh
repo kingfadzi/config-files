@@ -504,6 +504,28 @@ echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' > /etc/cron.d/logrotate
 echo '0 3 * * * /usr/local/bin/backup_postgres.sh' > /etc/cron.d/pgbackup
 
 ##############################################################################
+# SECURE_PATH CONFIGURATION
+##############################################################################
+
+log "Configuring sudo secure_path..."
+
+SECURE_PATH_FILE="/etc/sudoers.d/securepath"
+SECURE_PATH_CONTENT='Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"'
+
+# Create or overwrite secure path configuration safely
+echo "$SECURE_PATH_CONTENT" > "$SECURE_PATH_FILE"
+chmod 440 "$SECURE_PATH_FILE"
+
+# Validate sudoers syntax to prevent lockout
+if visudo -cf "$SECURE_PATH_FILE"; then
+    log "secure_path configured successfully."
+else
+    log "ERROR: Invalid sudoers configuration. Removing invalid file."
+    rm -f "$SECURE_PATH_FILE"
+    exit 1
+fi
+
+##############################################################################
 # FINALIZATION
 ##############################################################################
 
