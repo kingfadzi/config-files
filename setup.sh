@@ -448,8 +448,8 @@ log "Copying text configuration files..."
 cp "$TEXT_FILES_DIR/our-logs.conf" /etc/logrotate.d/our-logs
 cp "$TEXT_FILES_DIR/backup_postgres.sh" /usr/local/bin/backup_postgres.sh
 cp "$TEXT_FILES_DIR/superset_config.py" "$SUPERSET_CONFIG_PATH"
-cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services.sh
-chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services.sh
+cp "$TEXT_FILES_DIR/services.sh" /usr/local/bin/services
+chmod +x /usr/local/bin/backup_postgres.sh /usr/local/bin/services
 
 declare -A blob_files=(
     ["metabase.jar"]="$METABASE_HOME/metabase.jar"
