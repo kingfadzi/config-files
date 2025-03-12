@@ -4,7 +4,6 @@
 # CONFIG
 ##############################################################################
 
-USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 LOG_FILE="/var/log/services.log"
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
@@ -64,7 +63,7 @@ redis_check() {
 ##############################################################################
 
 start_postgres() {
-
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     if [ -z "${SUDO_USER:-}" ]; then
         echo "[ERROR] This script must be run using sudo." >&2
         exit 1
@@ -135,7 +134,7 @@ stop_postgres() {
 ##############################################################################
 
 start_redis() {
-
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     if [ -z "${SUDO_USER:-}" ]; then
         echo "[ERROR] This script must be run using sudo." >&2
         exit 1
