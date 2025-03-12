@@ -258,16 +258,16 @@ stop_metabase() {
 
 init_superset() {
     # Ensure Postgres is running
-    if ! psql_check; then
-        log "ERROR: PostgreSQL is not running; cannot init Superset."
-        return 1
+    if [ "$DB_HOST" = "localhost" ]; then
+        if ! psql_check; then
+            log "ERROR: Postgres is not running; cannot start Superset."
+            return 1
+        fi
+        if ! redis_check; then
+            log "ERROR: Redis is not running; cannot start Superset."
+            return 1
+        fi
     fi
-
-    if ! redis_check; then
-        log "ERROR: Redis is not running; cannot init Superset."
-        return 1
-    fi
-
     export FLASK_APP=superset
     export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
 
