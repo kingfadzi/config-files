@@ -5,6 +5,7 @@ from cachelib.redis import RedisCache
 
 # Superset Home: Use the environment variable if provided; otherwise, default to "$HOME/superset"
 SUPERSET_HOME = os.environ.get("SUPERSET_HOME", os.path.join(os.path.expanduser("~"), "superset"))
+SUPERSET_WEBSERVER_ADDRESS = "0.0.0.0"
 
 # -------------------------------
 # Database Configuration
