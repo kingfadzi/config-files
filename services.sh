@@ -217,6 +217,9 @@ start_metabase() {
     fi
 
     log "Starting Metabase..."
+    echo " Host: $MB_DB_HOST"
+    echo " Port: $MB_DB_PORT"
+
     cd "$METABASE_HOME" || return 1
     nohup java --add-opens java.base/java.nio=ALL-UNNAMED -jar "$METABASE_JAR" \
       > "$METABASE_LOG_DIR/metabase_log.log" 2>&1 &
@@ -304,11 +307,15 @@ start_superset() {
         log "Superset is already running."
         return 0
     fi
+
     cd "$SUPERSET_HOME" || return 1
     export SUPERSET_HOME="$SUPERSET_HOME"
     export FLASK_APP=superset
     export SUPERSET_CONFIG_PATH="$SUPERSET_CONFIG"
     log "Starting Superset..."
+    log " Host: $DB_HOST"
+    log " Port: $DB_PORT"
+
     nohup "$SUPERSET_HOME/env/bin/superset" run -p "$SUPERSET_PORT" -h 0.0.0.0 --with-threads --reload --debugger \
       > "$SUPERSET_LOG_DIR/superset_log.log" 2>&1 &
     for i in {1..60}; do
