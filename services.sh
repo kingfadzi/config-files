@@ -4,6 +4,7 @@
 # CONFIG
 ##############################################################################
 
+USER_HOME=$HOME
 LOG_FILE="/var/log/services.log"
 POSTGRES_DATA_DIR="/var/lib/pgsql/data"
 POSTGRES_LOG_DIR="/var/lib/pgsql/logs"
