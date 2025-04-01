@@ -227,7 +227,7 @@ start_metabase() {
     echo " Port: $MB_DB_PORT"
 
     cd "$METABASE_HOME" || return 1
-    nohup java --add-opens java.base/java.nio=ALL-UNNAMED -jar "$METABASE_JAR" \
+    nohup java -jar "$METABASE_JAR" \
       > "$METABASE_LOG_DIR/metabase_log.log" 2>&1 &
     for i in {1..60}; do
         if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
