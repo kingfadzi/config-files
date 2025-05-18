@@ -1,0 +1,7 @@
+repo_owner: kingfadzi
+repo_name: scan_scheduler
+branch: plugins
+target_dir: /home/fadzi/tools/scan_scheduler
+dirs_to_copy:
+  - test
+  - docs
