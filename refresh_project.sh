@@ -23,23 +23,32 @@ ZIP_URL="https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/$BRANCH.zi
 TMP_ZIP="$HOME/Downloads/${REPO_NAME}_${BRANCH}.zip"
 UNZIP_DIR="$HOME/Downloads/${REPO_NAME}-${BRANCH}"
 
-# Git pull if applicable
+# Step 1: git pull if target is a git repo
 if [ -d "$TARGET_DIR/.git" ]; then
   echo "Running git pull in $TARGET_DIR"
   git -C "$TARGET_DIR" pull
 fi
 
+# Step 2: Download ZIP
 echo "Downloading: $ZIP_URL"
 curl --proxy "${https_proxy:-}" -L "$ZIP_URL" -o "$TMP_ZIP"
 
+# Step 3: Unzip
 echo "Unzipping to: $UNZIP_DIR"
 unzip -q -o "$TMP_ZIP" -d "$HOME/Downloads"
 
-echo "Deleting existing target: $TARGET_DIR"
-rm -rf "$TARGET_DIR"
-mkdir -p "$TARGET_DIR"
+# Step 4: Delete specific directories in destination
+echo "Cleaning target directories in: $TARGET_DIR"
+for dir in "${DIRS_TO_COPY[@]}"; do
+  TARGET_SUBDIR="$TARGET_DIR/$dir"
+  if [ -d "$TARGET_SUBDIR" ]; then
+    echo "Deleting $TARGET_SUBDIR"
+    rm -rf "$TARGET_SUBDIR"
+  fi
+done
 
-echo "Copying selected directories to $TARGET_DIR"
+# Step 5: Copy new versions
+echo "Copying updated directories"
 for dir in "${DIRS_TO_COPY[@]}"; do
   SRC="$UNZIP_DIR/$dir"
   DEST="$TARGET_DIR/$dir"
