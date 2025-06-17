@@ -2,6 +2,7 @@ transfers:
   - source: /path/to/my-project
     host: prod.example.com
     username: deploy
+    enabled: true
     skip_patterns:
       - '.env'
       - 'node_modules'
@@ -10,6 +11,7 @@ transfers:
 
   - source: /home/user/data
     host: backup.example.com
+    enabled: false
     # no default username ⇒ you'll be prompted every time
     skip_patterns:
       - 'tmp'

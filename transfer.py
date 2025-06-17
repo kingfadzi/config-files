@@ -4,7 +4,8 @@ tar_and_scp.py
 
 Creates a gzip-compressed tarball of a given path—excluding any paths matching
 skip_patterns—and uploads it via SFTP using username/password credentials
-collected at runtime. Supports multiple transfers defined in YAML.
+collected at runtime. Supports multiple transfers defined in YAML, each of which
+can be enabled or disabled.
 
 Requires:
     pip install PyYAML paramiko
@@ -52,15 +53,13 @@ def make_tarball(src: Path, skip_patterns: list[str]) -> Path:
   tarball = Path(f"{base}-{date_str}.tar.gz")
   print(f"Creating archive '{tarball}' from '{src}', excluding {skip_patterns}...")
   def _filter(tarinfo: tarfile.TarInfo):
-    # get the path inside the archive, relative to base/
+    # path inside archive, relative to base/
     name = Path(tarinfo.name)
     try:
       rel = name.relative_to(base)
     except Exception:
-      # fallback—probably the top-level entry
       rel = name
     rel_str = rel.as_posix()
-    # skip if any pattern matches the relative path or its last component
     for pat in skip_patterns:
       if fnmatch.fnmatch(rel_str, pat) or fnmatch.fnmatch(rel.name, pat):
         print(f"  Skipping {tarinfo.name} (matches '{pat}')")
@@ -103,6 +102,11 @@ def main():
   transfers = load_config(Path(args.config_file))
 
   for job in transfers:
+    enabled = job.get("enabled", True)
+    if not enabled:
+      print(f"Skipping disabled transfer for source '{job.get('source')}'")
+      continue
+
     src = Path(job.get("source", ""))
     if not src.exists():
       print(f"Warning: source '{src}' does not exist, skipping.", file=sys.stderr)
@@ -129,7 +133,6 @@ def main():
     # prompt for password
     password = getpass.getpass(f"Password for {user}@{host}: ")
 
-    # create & upload
     tarball = make_tarball(src, skip)
     try:
       sftp_upload(tarball, host, user, password, remote_dir)
