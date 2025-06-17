@@ -1,0 +1,14 @@
+# transfers.yaml
+
+transfers:
+  - source: /path/to/first-directory
+    remote_target: user1@host1.example.com
+    remote_dir: /remote/path/for/first
+
+  - source: /path/to/second-directory
+    remote_target: user2@host2.example.com
+    remote_dir: /remote/path/for/second
+
+  - source: /var/log/my-app
+    remote_target: deploy@logs.example.com
+    remote_dir: /backups/logs/my-app

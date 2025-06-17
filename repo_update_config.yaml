@@ -7,8 +7,17 @@ repos:
     skip_patterns: []
 
   - repo_owner: kingfadzi
-    repo_name: config=files
+    repo_name: config-files
     branch: main
     target_dir: /home/fadzi/tools/config
+    skip_patterns: [ ]
+    enabled: false
+
+
+  - repo_owner: kingfadzi
+    repo_name: dashboard
+    branch: v2
+    target_dir: /home/fadzi/tools/dashboard
     skip_patterns: []
     enabled: false
+
