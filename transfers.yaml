@@ -1,14 +1,17 @@
-# transfers.yaml
-
 transfers:
-  - source: /path/to/first-directory
-    remote_target: user1@host1.example.com
-    remote_dir: /remote/path/for/first
+  - source: /path/to/my-project
+    host: prod.example.com
+    username: deploy
+    skip_patterns:
+      - '.env'
+      - 'node_modules'
+      - '*.log'
+    remote_dir: /var/www/my-project
 
-  - source: /path/to/second-directory
-    remote_target: user2@host2.example.com
-    remote_dir: /remote/path/for/second
-
-  - source: /var/log/my-app
-    remote_target: deploy@logs.example.com
-    remote_dir: /backups/logs/my-app
+  - source: /home/user/data
+    host: backup.example.com
+    # no default username ⇒ you'll be prompted every time
+    skip_patterns:
+      - 'tmp'
+      - '*.cache'
+    remote_dir: /backups/data
