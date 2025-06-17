@@ -102,7 +102,12 @@ def main():
   transfers = load_config(Path(args.config_file))
 
   for job in transfers:
-    enabled = job.get("enabled", True)
+    # coerce enabled flag to boolean
+    raw = job.get("enabled", True)
+    if isinstance(raw, str):
+      enabled = raw.strip().lower() not in ("false", "no", "0", "off", "n")
+    else:
+      enabled = bool(raw)
     if not enabled:
       print(f"Skipping disabled transfer for source '{job.get('source')}'")
       continue
@@ -139,7 +144,7 @@ def main():
     except Exception as e:
       print(f"Error uploading to {host}: {e}", file=sys.stderr)
     finally:
-      # optionally cleanup:
+      # optionally remove local tarball:
       # tarball.unlink()
       pass
 
