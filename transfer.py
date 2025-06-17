@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+tar_and_scp.py
+
+Creates a gzip-compressed tarball of a given path—excluding any paths matching
+skip_patterns—and uploads it via SFTP using username/password credentials
+collected at runtime. Supports multiple transfers defined in YAML.
+
+Requires:
+    pip install PyYAML paramiko
+"""
 
 import argparse
 import sys
@@ -6,13 +16,14 @@ import tarfile
 import datetime
 from pathlib import Path
 import getpass
+import fnmatch
 
 import yaml   # assumes PyYAML is installed
 import paramiko
 
 def parse_args():
   parser = argparse.ArgumentParser(
-    description="Archive files/dirs and upload them to multiple remotes via SFTP"
+    description="Archive files/dirs (with excludes) and upload them via SFTP"
   )
   parser.add_argument(
     "config_file",
@@ -24,21 +35,40 @@ def load_config(path: Path):
   if not path.is_file():
     print(f"Error: config file not found: {path}", file=sys.stderr)
     sys.exit(1)
-  with path.open() as f:
-    cfg = yaml.safe_load(f)
+  cfg = yaml.safe_load(path.read_text())
   transfers = cfg.get("transfers")
   if not isinstance(transfers, list) or not transfers:
     print("Error: config.yaml must contain a 'transfers:' list", file=sys.stderr)
     sys.exit(1)
   return transfers
 
-def make_tarball(src: Path) -> Path:
+def make_tarball(src: Path, skip_patterns: list[str]) -> Path:
+  """
+  Create a tar.gz of `src`, excluding any files/dirs whose
+  path relative to `src` matches one of skip_patterns.
+  """
   base = src.name
   date_str = datetime.date.today().isoformat()
   tarball = Path(f"{base}-{date_str}.tar.gz")
-  print(f"Creating archive '{tarball}' from '{src}'...")
+  print(f"Creating archive '{tarball}' from '{src}', excluding {skip_patterns}...")
+  def _filter(tarinfo: tarfile.TarInfo):
+    # get the path inside the archive, relative to base/
+    name = Path(tarinfo.name)
+    try:
+      rel = name.relative_to(base)
+    except Exception:
+      # fallback—probably the top-level entry
+      rel = name
+    rel_str = rel.as_posix()
+    # skip if any pattern matches the relative path or its last component
+    for pat in skip_patterns:
+      if fnmatch.fnmatch(rel_str, pat) or fnmatch.fnmatch(rel.name, pat):
+        print(f"  Skipping {tarinfo.name} (matches '{pat}')")
+        return None
+    return tarinfo
+
   with tarfile.open(tarball, "w:gz") as tf:
-    tf.add(src, arcname=base)
+    tf.add(src, arcname=base, filter=_filter)
   print("Archive created.")
   return tarball
 
@@ -49,19 +79,18 @@ def sftp_upload(tarball: Path, host: str, username: str, password: str, remote_d
   ssh.connect(hostname=host, username=username, password=password)
   sftp = ssh.open_sftp()
   try:
-    # mkdir -p equivalent
+    # mkdir -p remote_dir
     try:
       sftp.chdir(remote_dir)
     except IOError:
-      parts = Path(remote_dir).parts
-      curr = ""
-      for p in parts:
-        curr = f"{curr}/{p}" if curr else p
+      curr = Path("/")
+      for part in Path(remote_dir).parts:
+        curr = curr / part
         try:
-          sftp.chdir(curr)
+          sftp.chdir(str(curr))
         except IOError:
-          sftp.mkdir(curr)
-          sftp.chdir(curr)
+          sftp.mkdir(str(curr))
+          sftp.chdir(str(curr))
     remote_path = f"{remote_dir.rstrip('/')}/{tarball.name}"
     sftp.put(str(tarball), remote_path)
     print("Upload complete.")
@@ -79,8 +108,9 @@ def main():
       print(f"Warning: source '{src}' does not exist, skipping.", file=sys.stderr)
       continue
 
-    host = job.get("host")
+    host       = job.get("host")
     remote_dir = job.get("remote_dir")
+    skip       = job.get("skip_patterns", [])
     if not host or not remote_dir:
       print("Warning: missing host/remote_dir in entry, skipping.", file=sys.stderr)
       continue
@@ -99,13 +129,14 @@ def main():
     # prompt for password
     password = getpass.getpass(f"Password for {user}@{host}: ")
 
-    tarball = make_tarball(src)
+    # create & upload
+    tarball = make_tarball(src, skip)
     try:
       sftp_upload(tarball, host, user, password, remote_dir)
     except Exception as e:
       print(f"Error uploading to {host}: {e}", file=sys.stderr)
     finally:
-      # optionally remove local tarball:
+      # optionally cleanup:
       # tarball.unlink()
       pass
 
