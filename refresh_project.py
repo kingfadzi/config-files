@@ -44,15 +44,34 @@ def unzip_file(zip_path, extract_to):
         z.extractall(os.path.dirname(extract_to))
 
 def clean_target_dir(target_dir, skip_patterns):
-    """Delete everything in target_dir except items matching any skip_patterns."""
+    """
+    Delete everything in target_dir except:
+      1) the .git directory
+      2) hidden files/dirs (starting with '.')
+      3) names matching any skip_patterns
+    """
     if not os.path.isdir(target_dir):
         return
-    print(f"Cleaning {target_dir}, preserving patterns: {skip_patterns}")
+    print(f"Cleaning {target_dir}, preserving .git, hidden files, and patterns: {skip_patterns}")
     for name in os.listdir(target_dir):
         full = os.path.join(target_dir, name)
+
+        # 1) always preserve the VCS directory
+        if name == '.git':
+            print(f"  Preserving VCS dir {name}")
+            continue
+
+        # 2) always preserve hidden files/dirs
+        if name.startswith('.'):
+            print(f"  Preserving hidden {name}")
+            continue
+
+        # 3) preserve skip patterns
         if any(fnmatch.fnmatch(name, pat) for pat in skip_patterns):
             print(f"  Preserving {name}")
             continue
+
+        # otherwise delete
         print(f"  Deleting {full}")
         if os.path.isdir(full):
             shutil.rmtree(full)
@@ -66,7 +85,7 @@ def copy_with_skip(src_root, dst_root, skip_patterns):
         rel = os.path.relpath(root, src_root)
         dst_dir = os.path.join(dst_root, rel) if rel != '.' else dst_root
 
-        # skip entire directory if its basename matches
+        # skip entire directory if its basename matches skip_patterns
         base = os.path.basename(root)
         if rel != '.' and any(fnmatch.fnmatch(base, pat) for pat in skip_patterns):
             print(f"  Skipping directory {rel}")
@@ -86,12 +105,12 @@ def copy_with_skip(src_root, dst_root, skip_patterns):
             print(f"  Copied {os.path.join(rel, f)}")
 
 def process_repo(repo_cfg, downloads):
-    owner   = repo_cfg.get('repo_owner')
-    name    = repo_cfg.get('repo_name')
-    branch  = repo_cfg.get('branch')
-    target  = repo_cfg.get('target_dir')
-    skip    = repo_cfg.get('skip_patterns', [])
-    enabled = repo_cfg.get('enabled', True)
+    owner       = repo_cfg.get('repo_owner')
+    name        = repo_cfg.get('repo_name')
+    branch      = repo_cfg.get('branch')
+    target      = repo_cfg.get('target_dir')
+    skip        = repo_cfg.get('skip_patterns', [])
+    enabled     = repo_cfg.get('enabled', True)
 
     if not all([owner, name, branch, target]):
         print("  Error: each repo needs repo_owner, repo_name, branch, target_dir")
@@ -112,11 +131,11 @@ def process_repo(repo_cfg, downloads):
     copy_with_skip(str(extract_to), target, skip)
 
 def main():
-    p = argparse.ArgumentParser(
-        description="Pull, unzip & sync one or more GitHub repos, skipping patterns"
+    parser = argparse.ArgumentParser(
+        description="Pull, unzip & sync one or more GitHub repos, preserving .git and hidden files"
     )
-    p.add_argument('config_file', help='Path to config.yaml')
-    args = p.parse_args()
+    parser.add_argument('config_file', help='Path to config.yaml')
+    args = parser.parse_args()
 
     cfg = load_config(args.config_file)
     repos = cfg.get('repos', [])
