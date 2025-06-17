@@ -8,14 +8,7 @@ import shutil
 import zipfile
 import urllib.request
 from pathlib import Path
-
-# You need PyYAML: pip install PyYAML
-try:
-    import yaml
-except ImportError:
-    print("Error: PyYAML is required. Install with 'pip install PyYAML'")
-    sys.exit(1)
-
+import yaml  # assumes PyYAML is installed
 
 def load_config(path):
     if not os.path.isfile(path):
@@ -23,6 +16,19 @@ def load_config(path):
         sys.exit(1)
     with open(path, 'r') as f:
         return yaml.safe_load(f)
+
+
+def setup_proxy():
+    """
+    Install an opener that uses HTTP_PROXY / HTTPS_PROXY / NO_PROXY
+    from the environment (including any embedded creds).
+    """
+    proxy_handler = urllib.request.ProxyHandler()  # reads env vars by default
+    opener = urllib.request.build_opener(proxy_handler)
+    urllib.request.install_opener(opener)
+    env_proxies = {k: os.environ.get(k) for k in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")}
+    if any(env_proxies.values()):
+        print(f"Loaded proxy settings from env: {env_proxies}")
 
 
 def git_pull_if_repo(target_dir):
@@ -34,14 +40,12 @@ def git_pull_if_repo(target_dir):
 
 def download_zip(url, dest):
     print(f"Downloading: {url}")
-    dest_parent = os.path.dirname(dest)
-    os.makedirs(dest_parent, exist_ok=True)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
     urllib.request.urlretrieve(url, dest)
 
 
 def unzip_file(zip_path, extract_to):
     print(f"Unzipping to: {extract_to}")
-    # ensure clean extract directory
     if os.path.isdir(extract_to):
         shutil.rmtree(extract_to)
     with zipfile.ZipFile(zip_path, 'r') as z:
@@ -93,6 +97,9 @@ def main():
     unzip_dir = str(downloads / f"{repo_name}-{branch}")
 
     zip_url = f"https://github.com/{repo_owner}/{repo_name}/archive/refs/heads/{branch}.zip"
+
+    # set up proxy (reads HTTP_PROXY/HTTPS_PROXY/NO_PROXY)
+    setup_proxy()
 
     # 1. git pull if needed
     git_pull_if_repo(target_dir)
