@@ -35,6 +35,7 @@ export MB_DB_USER="${MB_DB_USER:-postgres}"
 export MB_DB_PASS="${MB_DB_PASS:-postgres}"
 export MB_DB_HOST="${MB_DB_HOST:-localhost}"
 export MB_JETTY_HOST="${MB_JETTY_HOST:-0.0.0.0}"
+export MB_DB_CONNECTION_TIMEOUT_MS=60000
 
 ##############################################################################
 # LOGGING & HELPERS
