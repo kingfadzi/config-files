@@ -20,9 +20,13 @@ public class KerberosSqlServerAuthTest {
 
         String connectionUrl = String.format(
                 "jdbc:sqlserver://%s:%s;databaseName=%s;" +
-                        "integratedSecurity=true;authenticationScheme=JavaKerberos;userName=%s",
+                        "integratedSecurity=true;" +
+                        "authenticationScheme=JavaKerberos;" +
+                        "trustServerCertificate=true;" +
+                        "userName=%s",
                 server, port, database, username
         );
+
 
         System.setProperty("java.security.krb5.conf", "/etc/krb5.conf");
 
