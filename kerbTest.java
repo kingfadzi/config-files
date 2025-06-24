@@ -25,6 +25,7 @@ public class KerberosSqlServerAuthTest {
         );
 
         System.setProperty("java.security.krb5.conf", "/etc/krb5.conf");
+        System.setProperty("sun.security.krb5.debug", "true");
 
         try {
             Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
