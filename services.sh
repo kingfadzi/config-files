@@ -227,8 +227,16 @@ start_metabase() {
     echo " Port: $MB_DB_PORT"
 
     cd "$METABASE_HOME" || return 1
-    nohup java -jar "$METABASE_JAR" \
+
+    # Only set Kerberos options if /etc/krb5.conf exists
+    KRB_OPTS=""
+    if [[ -f "/etc/krb5.conf" ]]; then
+        KRB_OPTS="-Djava.security.krb5.conf=/etc/krb5.conf"
+    fi
+
+    nohup java $KRB_OPTS -jar "$METABASE_JAR" \
       > "$METABASE_LOG_DIR/metabase_log.log" 2>&1 &
+
     for i in {1..60}; do
         if ss -tnlp | grep ":$METABASE_PORT" &>/dev/null; then
             log "Metabase started."
@@ -238,6 +246,7 @@ start_metabase() {
     done
     log "ERROR: Metabase failed to start after 60 seconds."
     return 1
+
 }
 
 stop_metabase() {
