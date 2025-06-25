@@ -40,18 +40,34 @@ def build_sql_server_conn_str(src_cfg: dict) -> str:
         parts.append(f"PWD={src_cfg['password']}")
     return ';'.join(parts)
 
-def fetch_column_info(sql_conn, table_name: str) -> list:
-    """Return list of non-binary column names for a given table."""
+def fetch_column_info(sql_conn, schema: str, table_name: str) -> list:
+    """
+    Return list of column names for a given schema.table, excluding VARBINARY types by default.
+    If no non-binary columns are found, fall back to all columns.
+    """
     cursor = sql_conn.cursor()
+    # first try excluding binary types
     cursor.execute("""
         SELECT COLUMN_NAME, DATA_TYPE
         FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = ?
-    """, table_name)
-    cols = [row[0] for row in cursor.fetchall()
-            if 'binary' not in row[1].lower()]
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+    """, schema, table_name)
+    filtered = [row[0] for row in cursor.fetchall()
+                if 'binary' not in row[1].lower()]
+    if filtered:
+        cursor.close()
+        return filtered
+
+    # fallback to all columns
+    cursor.execute("""
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+    """, schema, table_name)
+    all_cols = [row[0] for row in cursor.fetchall()]
     cursor.close()
-    return cols
+    print(f"[{schema}.{table_name}] no non-binary columns found, falling back to all columns.")
+    return all_cols
 
 def drop_table_if_exists(pg_engine, table: str):
     """Drop the target table in Postgres if it already exists."""
@@ -76,23 +92,25 @@ def build_where_clause(tbl_cfg: dict) -> str:
 
 def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
     """Fetch from SQL Server and insert into Postgres using chunked DataFrame writes."""
-    tbl   = tbl_cfg['name']
-    limit = tbl_cfg.get('limit')
+    schema = tbl_cfg.get('schema', 'dbo')
+    tbl    = tbl_cfg['name']
+    limit  = tbl_cfg.get('limit')
 
-    cols = fetch_column_info(sql_conn, tbl)
+    cols = fetch_column_info(sql_conn, schema, tbl)
     if not cols:
-        print(f"[{tbl}] no non-binary columns found; skipping.")
+        print(f"[{schema}.{tbl}] no columns found at all; skipping.")
         return
 
+    # On Postgres side we use the bare table name
     drop_table_if_exists(pg_engine, tbl)
 
-    cursor  = sql_conn.cursor()
+    cursor   = sql_conn.cursor()
     sel_cols = ", ".join(f"[{c}]" for c in cols)
     top      = f"TOP {limit} " if limit else ""
     where    = build_where_clause(tbl_cfg)
 
-    sql = f"SELECT {top}{sel_cols} FROM [{tbl}] {where}"
-    print(f"[{tbl}] Executing: {sql}")
+    sql = f"SELECT {top}{sel_cols} FROM [{schema}].[{tbl}] {where}"
+    print(f"[{schema}.{tbl}] Executing: {sql}")
     cursor.execute(sql)
 
     total = 0
@@ -111,10 +129,10 @@ def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
                 break
             df.to_sql(tbl, con=pg_conn, if_exists='append', index=False)
             total += len(df)
-            print(f"[{tbl}] inserted {len(df)} rows (total {total})")
+            print(f"[{schema}.{tbl}] inserted {len(df)} rows (total {total})")
 
     cursor.close()
-    print(f"[{tbl}] DONE: total {total} rows transferred.")
+    print(f"[{schema}.{tbl}] DONE: total {total} rows transferred.")
 
 def main():
     import argparse

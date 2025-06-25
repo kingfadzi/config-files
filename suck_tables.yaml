@@ -7,6 +7,7 @@ postgres:
 
 sources:
   - name: source1
+    schema: dbo
     driver: "ODBC Driver 17 for SQL Server"
     host: sqlserver.host
     instance: MSSQLSERVER
@@ -24,6 +25,7 @@ sources:
         where: "[UpdatedOn] >= DATEADD(day, -30, GETDATE())"
 
   - name: source2
+    schema: dbo
     driver: "ODBC Driver 17 for SQL Server"
     host: sqlserver.host
     instance: MSSQLSERVER
