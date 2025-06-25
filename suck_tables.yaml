@@ -15,23 +15,27 @@ sources:
     trusted_connection: yes
     tables:
       - name: TableA
-        date_column: CreatedDate
-        lookback_days: 90
-        limit: 10000
+        where:
+          - "[CreatedDate] >= '2025-01-01'"
+          - "[Status] = 'Active'"
+        limit: 5000
+
       - name: TableB
-        date_column: UpdatedOn
-        lookback_days: 30
+        where: "[UpdatedOn] >= DATEADD(day, -30, GETDATE())"
 
   - name: source2
     driver: "ODBC Driver 17 for SQL Server"
-    host: other.host
-    instance: SQLEXPRESS
+    host: sqlserver.host
+    instance: MSSQLSERVER
     port: 1433
-    database: SourceDB2
-    trusted_connection: no
-    username: myuser
-    password: secret
+    database: SourceDB1
+    trusted_connection: yes
     tables:
-      - name: Events
-        date_column: EventTime
-        lookback_days: 7
+      - name: TableA
+        where:
+          - "[CreatedDate] >= '2025-01-01'"
+          - "[Status] = 'Active'"
+        limit: 5000
+
+      - name: TableB
+        where: "[UpdatedOn] >= DATEADD(day, -30, GETDATE())"
