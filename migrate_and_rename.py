@@ -1,87 +1,128 @@
+#!/usr/bin/env python3
+import decimal
+import time
+from datetime import datetime, timedelta
+
+import yaml
 import pyodbc
 import pandas as pd
-import argparse
-from sqlalchemy import create_engine, text, event
-from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine, text
 
-def connect_sql_server(host, port, instance, database):
-    # Setup the SQL Server connection
-    conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host}\\{instance},{port};DATABASE={database};Trusted_Connection=yes;'
-    return pyodbc.connect(conn_str)
+# Adjust as needed
+CHUNK_SIZE = 50_000
 
-def connect_postgres():
-    # Setup the PostgreSQL connection
-    engine_url = f"postgresql://postgres:postgres@localhost/scratchpad"
-    return create_engine(engine_url)
+def load_config(path):
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
 
-# Listening for SQL statements executed by SQLAlchemy
-@event.listens_for(Engine, "before_cursor_execute")
-def receive_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-    print("Executing SQL: ", statement)
+def create_pg_engine(pg_cfg):
+    user = pg_cfg['user']
+    pw   = pg_cfg['password']
+    host = pg_cfg['host']
+    port = pg_cfg.get('port', 5432)
+    db   = pg_cfg['database']
+    url = f'postgresql://{user}:{pw}@{host}:{port}/{db}'
+    return create_engine(url)
 
-def migrate_table(sql_server_conn, pg_engine, table_name, limit=None, sort_column=None, sort_direction='asc'):
-    # Convert table name to lower case to avoid case sensitivity issues
-    table_name = table_name.lower()
-    print(f"Starting migration for table: {table_name}")
+def build_sql_server_conn_str(src_cfg):
+    parts = [
+        f"DRIVER={{{src_cfg['driver']}}}",
+        f"SERVER={src_cfg['host']}\\{src_cfg['instance']},{src_cfg['port']}",
+        f"DATABASE={src_cfg['database']}"
+    ]
+    if src_cfg.get('trusted_connection', False):
+        parts.append("Trusted_Connection=yes")
+    else:
+        parts.append(f"UID={src_cfg['username']}")
+        parts.append(f"PWD={src_cfg['password']}")
+    return ';'.join(parts)
 
-    # Building the SQL query with optional sorting and limit
-    sql_query = f"SELECT"
-    if limit:
-        sql_query += f" TOP {limit}"
-    sql_query += f" * FROM {table_name}"
-    if sort_column:
-        sql_query += f" ORDER BY {sort_column} {sort_direction}"
+def fetch_column_info(sql_conn, table_name):
+    cursor = sql_conn.cursor()
+    cursor.execute(f"""
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = ?
+    """, table_name)
+    cols = [row[0] for row in cursor.fetchall() if 'binary' not in row[1].lower()]
+    cursor.close()
+    return cols
 
-    print(f"Executing SQL query: {sql_query}")
-    data = pd.read_sql(sql_query, sql_server_conn)
+def drop_table_if_exists(pg_engine, table):
+    with pg_engine.begin() as conn:
+        conn.execute(text(f'DROP TABLE IF EXISTS "{table}"'))
+        print(f"Dropped PostgreSQL table if it existed: {table}")
 
-    num_records_retrieved = len(data)
-    print(f"Retrieved {num_records_retrieved} records from {table_name} in SQL Server.")
+def transfer_table(sql_conn, pg_engine, tbl_cfg):
+    tbl    = tbl_cfg['name']
+    datecol = tbl_cfg['date_column']
+    days   = tbl_cfg.get('lookback_days', 90)
+    limit  = tbl_cfg.get('limit', None)
 
-    if data.empty:
-        print(f"No data found in {table_name}. Skipping.")
+    cols = fetch_column_info(sql_conn, tbl)
+    if not cols:
+        print(f"[{tbl}] no non-binary columns found; skipping.")
         return
 
-    # Ensuring column names are in lower case
-    data.columns = [col.lower().replace(' ', '_').replace('(', '_').replace(')', '_') for col in data.columns]
+    drop_table_if_exists(pg_engine, tbl)
 
-    with pg_engine.connect() as conn:
-        # Dropping the table if exists in PostgreSQL
-        conn.execute(text(f"DROP TABLE IF EXISTS {table_name};"))
-        print(f"Dropped table {table_name} if it existed in PostgreSQL.")
+    cursor = sql_conn.cursor()
+    cutoff = datetime.now() - timedelta(days=days)
+    sel_cols = ', '.join(f'[{c}]' for c in cols)
+    top = f"TOP {limit} " if limit else ""
+    sql = (
+        f"SELECT {top}{sel_cols} FROM [{tbl}] "
+        f"WHERE [{datecol}] >= ?"
+    )
 
-        # Creating the table and inserting data
-        data.to_sql(table_name, con=conn, index=False, if_exists='replace')
-        conn.execute(text("COMMIT;"))  # Ensuring changes are committed
-        print(f"Data successfully inserted into table {table_name} in PostgreSQL.")
+    print(f"[{tbl}] Executing: {sql}")
+    cursor.execute(sql, cutoff)
 
-        # Verify the number of records inserted into PostgreSQL
-        result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name};"))
-        records_in_pg = result.fetchone()[0]
-        print(f"PostgreSQL table {table_name} now has {records_in_pg} records.")
+    inserted = 0
+    with pg_engine.begin() as pg_conn:
+        while True:
+            chunk = cursor.fetchmany(CHUNK_SIZE)
+            if not chunk:
+                break
+            # convert decimals
+            data = [
+                [float(x) if isinstance(x, decimal.Decimal) else x for x in row]
+                for row in chunk
+            ]
+            df = pd.DataFrame(data, columns=cols)
+            if df.empty:
+                break
+            df.to_sql(tbl, con=pg_conn, if_exists='append', index=False)
+            inserted += len(df)
+            print(f"[{tbl}] inserted {len(df)} rows (total {inserted})")
+
+    cursor.close()
+    print(f"[{tbl}] DONE: total {inserted} rows transferred.")
 
 def main():
-    parser = argparse.ArgumentParser(description='Migrate tables from SQL Server to PostgreSQL.')
-    parser.add_argument('--host', required=True)
-    parser.add_argument('--instance', required=True)
-    parser.add_argument('--port', required=True)
-    parser.add_argument('--db', required=True)
-    parser.add_argument('--tables', nargs='+', required=True)
-    parser.add_argument('--limit', type=int, help='Optional: Limit the number of records to fetch')
-    parser.add_argument('--sort_column', help='Optional: Column to sort by')
-    parser.add_argument('--sort_direction', default='asc', choices=['asc', 'desc'], help='Optional: Sort direction (asc or desc)')
-    args = parser.parse_args()
+    import argparse
+    p = argparse.ArgumentParser(
+        description="Bulk-copy from SQL Server to Postgres via YAML"
+    )
+    p.add_argument(
+        '--config', '-c',
+        required=True,
+        help="Path to YAML config"
+    )
+    args = p.parse_args()
 
-    # Connect to databases
-    sql_server_conn = connect_sql_server(args.host, args.port, args.instance, args.db)
-    pg_engine = connect_postgres()
+    cfg = load_config(args.config)
+    pg_engine = create_pg_engine(cfg['postgres'])
 
-    # Process each table
-    for table in args.tables:
-        migrate_table(sql_server_conn, pg_engine, table.lower(), args.limit, args.sort_column, args.sort_direction)
+    for src in cfg['sources']:
+        print(f"=== Source: {src['name']} ===")
+        conn_str = build_sql_server_conn_str(src)
+        sql_conn = pyodbc.connect(conn_str, autocommit=True)
+        for tbl in src.get('tables', []):
+            transfer_table(sql_conn, pg_engine, tbl)
+        sql_conn.close()
 
-    # Close the SQL Server connection
-    sql_server_conn.close()
+    pg_engine.dispose()
 
 if __name__ == "__main__":
     main()
