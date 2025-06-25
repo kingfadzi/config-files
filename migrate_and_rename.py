@@ -46,7 +46,6 @@ def fetch_column_info(sql_conn, schema: str, table_name: str) -> list:
     If no non-binary columns are found, fall back to all columns.
     """
     cursor = sql_conn.cursor()
-    # first try excluding binary types
     cursor.execute("""
         SELECT COLUMN_NAME, DATA_TYPE
         FROM INFORMATION_SCHEMA.COLUMNS
@@ -58,7 +57,6 @@ def fetch_column_info(sql_conn, schema: str, table_name: str) -> list:
         cursor.close()
         return filtered
 
-    # fallback to all columns
     cursor.execute("""
         SELECT COLUMN_NAME
         FROM INFORMATION_SCHEMA.COLUMNS
@@ -92,6 +90,10 @@ def build_where_clause(tbl_cfg: dict) -> str:
 
 def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
     """Fetch from SQL Server and insert into Postgres using chunked DataFrame writes."""
+    if not tbl_cfg.get('enabled', True):
+        print(f"--> Skipping table {tbl_cfg.get('schema','dbo')}.{tbl_cfg['name']} (disabled)")
+        return
+
     schema = tbl_cfg.get('schema', 'dbo')
     tbl    = tbl_cfg['name']
     limit  = tbl_cfg.get('limit')
@@ -101,7 +103,6 @@ def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
         print(f"[{schema}.{tbl}] no columns found at all; skipping.")
         return
 
-    # On Postgres side we use the bare table name
     drop_table_if_exists(pg_engine, tbl)
 
     cursor   = sql_conn.cursor()
@@ -119,7 +120,6 @@ def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
             rows = cursor.fetchmany(CHUNK_SIZE)
             if not rows:
                 break
-            # convert Decimal to float
             data = [
                 [float(v) if isinstance(v, decimal.Decimal) else v for v in row]
                 for row in rows
@@ -150,11 +150,17 @@ def main():
     pg_engine = create_pg_engine(cfg['postgres'])
 
     for src in cfg.get('sources', []):
+        if not src.get('enabled', True):
+            print(f"--> Skipping source {src['name']} (disabled)")
+            continue
+
         print(f"\n=== Source: {src['name']} ===")
         conn_str = build_sql_server_conn_str(src)
         sql_conn = pyodbc.connect(conn_str, autocommit=True)
+
         for tbl in src.get('tables', []):
             transfer_table(sql_conn, pg_engine, tbl)
+
         sql_conn.close()
 
     pg_engine.dispose()

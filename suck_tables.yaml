@@ -7,6 +7,7 @@ postgres:
 
 sources:
   - name: source1
+    enabled: true
     driver: "ODBC Driver 17 for SQL Server"
     host: sqlserver.host
     instance: MSSQLSERVER
@@ -16,28 +17,29 @@ sources:
     tables:
       - name: TableA
         schema: dbo
+        enabled: true
         where:
           - "[CreatedDate] >= '2025-01-01'"
           - "[Status] = 'Active'"
         limit: 5000
 
       - name: TableB
+        schema: dbo
+        enabled: false   # this table will be skipped
         where: "[UpdatedOn] >= DATEADD(day, -30, GETDATE())"
 
   - name: source2
+    enabled: false     # this entire source will be skipped
     driver: "ODBC Driver 17 for SQL Server"
-    host: sqlserver.host
-    instance: MSSQLSERVER
+    host: other.host
+    instance: SQLEXPRESS
     port: 1433
-    database: SourceDB1
-    trusted_connection: yes
+    database: SourceDB2
+    trusted_connection: no
+    username: myuser
+    password: secret
     tables:
-      - name: TableA
-        schema: dbo
-        where:
-          - "[CreatedDate] >= '2025-01-01'"
-          - "[Status] = 'Active'"
-        limit: 5000
-
-      - name: TableB
-        where: "[UpdatedOn] >= DATEADD(day, -30, GETDATE())"
+      - name: Events
+        schema: audit
+        enabled: true
+        where: "[Level] = 'ERROR'"
