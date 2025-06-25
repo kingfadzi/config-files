@@ -3,3 +3,4 @@ paramiko
 SQLAlchemy
 pyodbc
 pandas
+psycopg2-binary
