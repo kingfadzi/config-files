@@ -15,11 +15,9 @@ CHUNK_SIZE = 50_000
 def sanitize(name: str) -> str:
     """
     Strip leading/trailing whitespace, replace internal spaces with underscores,
-    remove any remaining illegal characters if desired, and lowercase.
+    and lowercase.
     """
-    # replace one-or-more spaces with a single underscore
-    s = re.sub(r'\s+', '_', name.strip())
-    return s.lower()
+    return re.sub(r'\s+', '_', name.strip()).lower()
 
 def load_config(path: str) -> dict:
     """Load YAML configuration from file."""
@@ -98,6 +96,21 @@ def build_where_clause(tbl_cfg: dict) -> str:
         return f"WHERE {joined}"
     return f"WHERE {wc}"
 
+def build_order_clause(tbl_cfg: dict) -> str:
+    """
+    Build an ORDER BY clause from tbl_cfg['order_by']:
+      - If None: returns empty string
+      - If list: joins items with commas
+      - If string: uses it verbatim
+    """
+    ob = tbl_cfg.get('order_by')
+    if ob is None:
+        return ""
+    if isinstance(ob, list):
+        joined = ", ".join(ob)
+        return f"ORDER BY {joined}"
+    return f"ORDER BY {ob}"
+
 def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
     """Fetch from SQL Server and insert into Postgres using chunked DataFrame writes."""
     if not tbl_cfg.get('enabled', True):
@@ -106,28 +119,27 @@ def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
         print(f"--> Skipping table {schema}.{name} (disabled)")
         return
 
-    schema = tbl_cfg.get('schema', 'dbo')
-    orig_name = tbl_cfg['name']
-    sanitized_table = sanitize(orig_name)
+    schema        = tbl_cfg.get('schema', 'dbo')
+    orig_name     = tbl_cfg['name']
+    sanitized_tbl = sanitize(orig_name)
 
-    # 1) get original column names
+    # get original column names
     cols = fetch_column_info(sql_conn, schema, orig_name)
     if not cols:
-        print(f"[{schema}.{orig_name}] no columns found at all; skipping.")
+        print(f"[{schema}.{orig_name}] no columns found; skipping.")
         return
 
-    # 2) build mapping to sanitized column names
+    # mapping for sanitized column names
     sanitized_cols = [sanitize(c) for c in cols]
-
-    # 3) drop target table in Postgres
-    drop_table_if_exists(pg_engine, sanitized_table)
+    drop_table_if_exists(pg_engine, sanitized_tbl)
 
     cursor   = sql_conn.cursor()
     sel_cols = ", ".join(f"[{c}]" for c in cols)
     top      = f"TOP {tbl_cfg.get('limit')} " if tbl_cfg.get('limit') else ""
     where    = build_where_clause(tbl_cfg)
+    order    = build_order_clause(tbl_cfg)
 
-    sql = f"SELECT {top}{sel_cols} FROM [{schema}].[{orig_name}] {where}"
+    sql = f"SELECT {top}{sel_cols} FROM [{schema}].[{orig_name}] {where} {order}"
     print(f"[{schema}.{orig_name}] Executing: {sql}")
     cursor.execute(sql)
 
@@ -137,8 +149,6 @@ def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
             rows = cursor.fetchmany(CHUNK_SIZE)
             if not rows:
                 break
-
-            # convert Decimal to float and apply sanitized column names
             data = [
                 [float(v) if isinstance(v, decimal.Decimal) else v for v in row]
                 for row in rows
@@ -146,18 +156,12 @@ def transfer_table(sql_conn, pg_engine, tbl_cfg: dict):
             df = pd.DataFrame(data, columns=sanitized_cols)
             if df.empty:
                 break
-
-            df.to_sql(
-                sanitized_table,
-                con=pg_conn,
-                if_exists='append',
-                index=False
-            )
+            df.to_sql(sanitized_tbl, con=pg_conn, if_exists='append', index=False)
             total += len(df)
-            print(f"[{sanitized_table}] inserted {len(df)} rows (total {total})")
+            print(f"[{sanitized_tbl}] inserted {len(df)} rows (total {total})")
 
     cursor.close()
-    print(f"[{sanitized_table}] DONE: total {total} rows transferred.")
+    print(f"[{sanitized_tbl}] DONE: total {total} rows transferred.")
 
 def main():
     import argparse
